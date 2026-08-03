@@ -306,7 +306,9 @@ function readAndValidateCreationObjects_() {
     }
     const sheetRow = context.config.dataStartRow + offset;
     const id = String(row[indexes[H.OBJECT_ID]] == null
-      ? '' : row[indexes[H.OBJECT_ID]]).trim();
+      ? '' : row[indexes[H.OBJECT_ID]])
+      .replace(/\u00A0/g, ' ')
+      .trim();
     candidates.push({ row: row, sheetRow: sheetRow, id: id });
     if (id) {
       if (!idRows[id]) {
@@ -328,10 +330,16 @@ function readAndValidateCreationObjects_() {
   candidates.forEach(function (candidate) {
     const reasons = [];
     requiredHeaders.forEach(function (header) {
+      if (header === H.OBJECT_ID) {
+        return;
+      }
       if (creationValueIsEmpty_(candidate.row[indexes[header]])) {
         reasons.push('не заполнено поле «' + header + '»');
       }
     });
+    if (!candidate.id) {
+      reasons.push('не заполнено поле «' + H.OBJECT_ID + '»');
+    }
     if (candidate.id && duplicateIds[candidate.id]) {
       reasons.push(
         'ID объекта повторяется в строках ' +
@@ -822,7 +830,15 @@ function creationNormalizedValue_(value) {
 
 
 function creationValueIsEmpty_(value) {
-  return value === '' || value === null || typeof value === 'undefined';
+  if (value === null || typeof value === 'undefined') {
+    return true;
+  }
+
+  if (typeof value === 'string') {
+    return value.replace(/\u00A0/g, ' ').trim() === '';
+  }
+
+  return false;
 }
 
 
