@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 14px;
+      margin: 0;
+      font-size: 13px;
+      color: #202124;
+      background: #ffffff;
+    }
+
+    h2 {
+      font-size: 18px;
+      margin: 0 0 22px 0;
+      font-weight: 600;
+    }
+
+    .field {
+      margin-bottom: 17px;
+    }
+
+    label {
+      display: block;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    input {
+      box-sizing: border-box;
+      width: 100%;
+      padding: 8px 10px;
+
+      border: 1px solid #dadce0;
+      border-radius: 4px;
+
+      background: #ffffff;
+      color: #202124;
+
+      font-size: 13px;
+      outline: none;
+    }
+
+    input:focus {
+      border-color: #1a73e8;
+      box-shadow: 0 0 0 1px #1a73e8;
+    }
+
+    input::placeholder {
+      color: #80868b;
+    }
+
+    .buttons {
+      display: flex;
+      gap: 10px;
+      margin-top: 24px;
+    }
+
+    button {
+      flex: 1;
+
+      padding: 9px 12px;
+
+      border: none;
+      border-radius: 4px;
+
+      font-size: 13px;
+      font-weight: 500;
+
+      cursor: pointer;
+    }
+
+    .apply {
+      background: #1a73e8;
+      color: #ffffff;
+    }
+
+    .apply:hover {
+      background: #1765cc;
+    }
+
+    .reset {
+      background: #f1f3f4;
+      color: #3c4043;
+    }
+
+    .reset:hover {
+      background: #e8eaed;
+    }
+
+    #statusMessage {
+      margin-top: 16px;
+      min-height: 18px;
+
+      font-size: 12px;
+      line-height: 1.4;
+
+      color: #5f6368;
+    }
+
+    .error {
+      color: #d93025 !important;
+    }
+
+    .success {
+      color: #188038 !important;
+    }
+
+    .loading {
+      opacity: 0.65;
+      pointer-events: none;
+    }
+  </style>
+</head>
+
+
+<body>
+
+  <h2>Фильтры</h2>
+
+
+  <!-- ===================================================
+       ОБЪЕКТ
+       =================================================== -->
+
+  <div class="field">
+
+    <label for="objectInput">
+      Объект
+    </label>
+
+    <input
+      id="objectInput"
+      list="objectsList"
+      placeholder="Все"
+      autocomplete="off"
+    >
+
+    <datalist id="objectsList"></datalist>
+
+  </div>
+
+
+  <!-- ===================================================
+       ОТВЕТСТВЕННЫЙ ПРОРАБ
+       Только сотрудники с должностью:
+       "Производитель работ (прораб)"
+       =================================================== -->
+
+  <div class="field">
+
+    <label for="foremanInput">
+      Ответственный прораб
+    </label>
+
+    <input
+      id="foremanInput"
+      list="foremenList"
+      placeholder="Все"
+      autocomplete="off"
+    >
+
+    <datalist id="foremenList"></datalist>
+
+  </div>
+
+
+  <!-- ===================================================
+       СТАТУС ДОКУМЕНТА
+       Пока свободный текст
+       =================================================== -->
+
+  <div class="field">
+
+    <label for="statusInput">
+      Статус документа
+    </label>
+
+    <input
+      id="statusInput"
+      type="text"
+      placeholder="Все"
+      autocomplete="off"
+    >
+
+  </div>
+
+
+  <!-- ===================================================
+       ТИП ДОКУМЕНТА
+       Из листа "Документы Справочник"
+       =================================================== -->
+
+  <div class="field">
+
+    <label for="documentTypeInput">
+      Тип документа
+    </label>
+
+    <input
+      id="documentTypeInput"
+      list="documentTypesList"
+      placeholder="Все"
+      autocomplete="off"
+    >
+
+    <datalist id="documentTypesList"></datalist>
+
+  </div>
+
+
+  <!-- ===================================================
+       У КОГО ДОКУМЕНТ
+       Все сотрудники
+       =================================================== -->
+
+  <div class="field">
+
+    <label for="holderInput">
+      У кого документ
+    </label>
+
+    <input
+      id="holderInput"
+      list="employeesList"
+      placeholder="Все"
+      autocomplete="off"
+    >
+
+    <datalist id="employeesList"></datalist>
+
+  </div>
+
+
+  <!-- ===================================================
+       КНОПКИ
+       =================================================== -->
+
+  <div class="buttons">
+
+    <button
+      id="applyButton"
+      class="apply"
+      onclick="applyFilters()"
+    >
+      Применить
+    </button>
+
+    <button
+      class="reset"
+      onclick="resetFilters()"
+    >
+      Сбросить
+    </button>
+
+  </div>
+
+
+  <div id="statusMessage"></div>
+
+
+  <script>
+
+    // =====================================================
+    // ДАННЫЕ СПРАВОЧНИКОВ
+    // =====================================================
+
+    let filterData = {
+      objects: [],
+      foremen: [],
+      employees: [],
+      documentTypes: []
+    };
+
+
+    // =====================================================
+    // ЗАГРУЗКА SIDEBAR
+    // =====================================================
+
+    window.onload = function() {
+
+      setLoading(true);
+
+      setStatus(
+        'Загрузка справочников...',
+        ''
+      );
+
+
+      google.script.run
+
+        .withSuccessHandler(function(data) {
+
+          filterData = {
+            objects: data.objects || [],
+            foremen: data.foremen || [],
+            employees: data.employees || [],
+            documentTypes: data.documentTypes || []
+          };
+
+
+          // -----------------------------
+          // Объекты
+          // -----------------------------
+
+          fillDataList(
+            'objectsList',
+            filterData.objects,
+            function(item) {
+              return item.name;
+            }
+          );
+
+
+          // -----------------------------
+          // Прорабы
+          // -----------------------------
+
+          fillDataList(
+            'foremenList',
+            filterData.foremen,
+            function(item) {
+              return item.name;
+            }
+          );
+
+
+          // -----------------------------
+          // Все сотрудники
+          // -----------------------------
+
+          fillDataList(
+            'employeesList',
+            filterData.employees,
+            function(item) {
+              return item.name;
+            }
+          );
+
+
+          // -----------------------------
+          // Типы документов
+          // -----------------------------
+
+          fillDataList(
+            'documentTypesList',
+            filterData.documentTypes,
+            function(item) {
+              return item.name;
+            }
+          );
+
+
+          setLoading(false);
+
+          setStatus('', '');
+
+        })
+
+
+        .withFailureHandler(function(error) {
+
+          setLoading(false);
+
+          setStatus(
+            'Ошибка загрузки справочников: ' +
+            getErrorMessage(error),
+            'error'
+          );
+
+        })
+
+
+        .getOperatorFilterData();
+
+    };
+
+
+    // =====================================================
+    // ЗАПОЛНЕНИЕ ВЫПАДАЮЩИХ СПИСКОВ
+    // =====================================================
+
+    function fillDataList(
+      elementId,
+      items,
+      getLabel
+    ) {
+
+      const list =
+        document.getElementById(elementId);
+
+      list.innerHTML = '';
+
+
+      items.forEach(function(item) {
+
+        const option =
+          document.createElement('option');
+
+        option.value =
+          getLabel(item);
+
+        list.appendChild(option);
+
+      });
+
+    }
+
+
+    // =====================================================
+    // ПОИСК ЭЛЕМЕНТА СПРАВОЧНИКА ПО НАЗВАНИЮ
+    // =====================================================
+
+    function findByName(
+      items,
+      value
+    ) {
+
+      const normalizedValue =
+        normalizeText(value);
+
+
+      if (!normalizedValue) {
+        return null;
+      }
+
+
+      return items.find(function(item) {
+
+        return normalizeText(item.name) ===
+               normalizedValue;
+
+      }) || null;
+
+    }
+
+
+    // =====================================================
+    // ПРИМЕНИТЬ ФИЛЬТРЫ
+    // =====================================================
+
+    function applyFilters() {
+
+      // -----------------------------
+      // Текст из полей
+      // -----------------------------
+
+      const objectText =
+        document
+          .getElementById('objectInput')
+          .value
+          .trim();
+
+
+      const foremanText =
+        document
+          .getElementById('foremanInput')
+          .value
+          .trim();
+
+
+      const statusText =
+        document
+          .getElementById('statusInput')
+          .value
+          .trim();
+
+
+      const documentTypeText =
+        document
+          .getElementById('documentTypeInput')
+          .value
+          .trim();
+
+
+      const holderText =
+        document
+          .getElementById('holderInput')
+          .value
+          .trim();
+
+
+      // -----------------------------
+      // Находим ID выбранных сущностей
+      // -----------------------------
+
+      const object =
+        findByName(
+          filterData.objects,
+          objectText
+        );
+
+
+      const foreman =
+        findByName(
+          filterData.foremen,
+          foremanText
+        );
+
+
+      const documentType =
+        findByName(
+          filterData.documentTypes,
+          documentTypeText
+        );
+
+
+      const holder =
+        findByName(
+          filterData.employees,
+          holderText
+        );
+
+
+      // -----------------------------
+      // Проверка выбранных значений
+      // -----------------------------
+
+      if (
+        objectText &&
+        !object
+      ) {
+
+        setStatus(
+          'Выберите объект из списка.',
+          'error'
+        );
+
+        return;
+      }
+
+
+      if (
+        foremanText &&
+        !foreman
+      ) {
+
+        setStatus(
+          'Выберите прораба из списка.',
+          'error'
+        );
+
+        return;
+      }
+
+
+      if (
+        documentTypeText &&
+        !documentType
+      ) {
+
+        setStatus(
+          'Выберите тип документа из списка.',
+          'error'
+        );
+
+        return;
+      }
+
+
+      if (
+        holderText &&
+        !holder
+      ) {
+
+        setStatus(
+          'Выберите сотрудника из списка.',
+          'error'
+        );
+
+        return;
+      }
+
+
+      // -----------------------------
+      // Объект фильтров
+      // -----------------------------
+
+      const filters = {
+
+        // Объект
+        objectId:
+          object
+            ? object.id
+            : '',
+
+        objectName:
+          object
+            ? object.name
+            : '',
+
+
+        // Ответственный прораб
+        responsibleEmployeeId:
+          foreman
+            ? foreman.id
+            : '',
+
+        responsibleName:
+          foreman
+            ? foreman.name
+            : '',
+
+
+        // Статус
+        status:
+          statusText,
+
+
+        // Тип документа
+        documentTypeId:
+          documentType
+            ? documentType.id
+            : '',
+
+        documentType:
+          documentType
+            ? documentType.name
+            : '',
+
+
+        // У кого документ
+        holderEmployeeId:
+          holder
+            ? holder.id
+            : '',
+
+        holderName:
+          holder
+            ? holder.name
+            : ''
+
+      };
+
+
+      // -----------------------------
+      // Передача фильтров в Apps Script
+      // -----------------------------
+
+      setLoading(true);
+
+      setStatus(
+        'Загрузка карточки...',
+        ''
+      );
+
+
+      google.script.run
+
+        .withSuccessHandler(function(result) {
+
+          setLoading(false);
+
+          setStatus(
+            result && result.message
+              ? result.message
+              : 'Готово',
+            'success'
+          );
+
+        })
+
+
+        .withFailureHandler(function(error) {
+
+          setLoading(false);
+
+          setStatus(
+            'Ошибка: ' +
+            getErrorMessage(error),
+            'error'
+          );
+
+        })
+
+
+        .applyOperatorFilters(filters);
+
+    }
+
+
+    // =====================================================
+    // СБРОС ФИЛЬТРОВ
+    // =====================================================
+
+    function resetFilters() {
+
+      document
+        .getElementById('objectInput')
+        .value = '';
+
+
+      document
+        .getElementById('foremanInput')
+        .value = '';
+
+
+      document
+        .getElementById('statusInput')
+        .value = '';
+
+
+      document
+        .getElementById('documentTypeInput')
+        .value = '';
+
+
+      document
+        .getElementById('holderInput')
+        .value = '';
+
+
+      setStatus('', '');
+
+    }
+
+
+    // =====================================================
+    // НОРМАЛИЗАЦИЯ ТЕКСТА
+    // =====================================================
+
+    function normalizeText(value) {
+
+      return String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, ' ');
+
+    }
+
+
+    // =====================================================
+    // СТАТУС
+    // =====================================================
+
+    function setStatus(
+      text,
+      type
+    ) {
+
+      const element =
+        document.getElementById(
+          'statusMessage'
+        );
+
+
+      element.textContent =
+        text || '';
+
+
+      element.classList.remove(
+        'error',
+        'success'
+      );
+
+
+      if (type) {
+        element.classList.add(type);
+      }
+
+    }
+
+
+    // =====================================================
+    // СОСТОЯНИЕ ЗАГРУЗКИ
+    // =====================================================
+
+    function setLoading(isLoading) {
+
+      const button =
+        document.getElementById(
+          'applyButton'
+        );
+
+
+      if (isLoading) {
+
+        button.disabled = true;
+
+        button.textContent =
+          'Загрузка...';
+
+      } else {
+
+        button.disabled = false;
+
+        button.textContent =
+          'Применить';
+
+      }
+
+    }
+
+
+    // =====================================================
+    // ТЕКСТ ОШИБКИ
+    // =====================================================
+
+    function getErrorMessage(error) {
+
+      if (!error) {
+        return 'Неизвестная ошибка';
+      }
+
+
+      if (error.message) {
+        return error.message;
+      }
+
+
+      return String(error);
+
+    }
+
+  </script>
+
+</body>
+</html>
