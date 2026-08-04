@@ -156,6 +156,19 @@ const SYSTEM_CONFIG = {
 
     INITIAL_DOCUMENT_STATUS: 'Ожидает заполнения',
 
+    AUTO_CREATE_DOCUMENTS: 'Автоматически',
+
+    OPERATION_STATUS_SUCCESS: 'Успешно',
+    OPERATION_STATUS_SUCCESS_WITH_WARNINGS:
+      'Успешно с предупреждениями',
+    OPERATION_STATUS_NO_CHANGES: 'Без изменений',
+    OPERATION_STATUS_ERROR: 'Ошибка',
+
+    OBJECT_DOCUMENT_CREATION_OPERATION_TYPE:
+      'Создание недостающих документов по объектам',
+
+    CHANGE_ACTION_CREATE: 'Создание',
+
     OPERATOR_CARD_SOURCE: 'Карточка операциониста',
     OBJECT_CREATION_SOURCE: 'Создание документов по объекту',
     AUTOMATION_SOURCE: 'Автоматизация'
@@ -603,6 +616,70 @@ function assertSystemStructure_() {
 
 
 /**
+ * Проверяет структуру только перечисленных системных листов.
+ * Используется независимыми рабочими модулями, которым не нужна
+ * полная проверка всех листов системы.
+ */
+function assertSystemSheetsStructure_(sheetKeys) {
+  if (!Array.isArray(sheetKeys) || sheetKeys.length === 0) {
+    throw new TypeError(
+      'assertSystemSheetsStructure_ ожидает непустой массив ключей листов.'
+    );
+  }
+
+  const ss = getSystemSpreadsheet_();
+  const result = {
+    version: SYSTEM_CONFIG.VERSION,
+    checkedAt: new Date(),
+    ok: true,
+    errors: [],
+    warnings: [],
+    sheets: []
+  };
+  const seenKeys = {};
+
+  sheetKeys.forEach(function (sheetKey) {
+    if (seenKeys[sheetKey]) {
+      throw new Error(
+        'Системный ключ листа «' + sheetKey + '» передан повторно.'
+      );
+    }
+
+    seenKeys[sheetKey] = true;
+
+    const config = SYSTEM_CONFIG.SHEETS[sheetKey];
+
+    if (!config) {
+      throw new Error(
+        'Неизвестный системный ключ листа: ' + sheetKey
+      );
+    }
+
+    const sheetResult = validateConfiguredSheet_(
+      ss,
+      sheetKey,
+      config
+    );
+
+    result.sheets.push(sheetResult);
+    result.errors = result.errors.concat(sheetResult.errors);
+    result.warnings = result.warnings.concat(sheetResult.warnings);
+  });
+
+  result.ok = result.errors.length === 0;
+
+  if (!result.ok) {
+    throw new Error(
+      'Структура используемых листов содержит ошибки:\n\n' +
+      result.errors.join('\n')
+    );
+  }
+
+  return result;
+}
+
+
+/**
  * Проверяет внутреннюю конфигурацию ядра.
  */
 function validateConfiguration_(result) {
@@ -1019,6 +1096,18 @@ function getActiveUserEmail_() {
   ).trim();
 
   return email || 'EMAIL_NOT_AVAILABLE';
+}
+
+
+/** Формирует уникальный ID операции. */
+function generateOperationId_() {
+  return SYSTEM_CONFIG.ID_PREFIXES.OPERATION + Utilities.getUuid();
+}
+
+
+/** Формирует уникальный ID изменения. */
+function generateChangeId_() {
+  return SYSTEM_CONFIG.ID_PREFIXES.CHANGE + Utilities.getUuid();
 }
 
 
