@@ -320,6 +320,9 @@ function buildObjectSyncPlan_(objects, documents, now, userEmail, operationId) {
         newValue: objectSyncHistoryValue_(change.newValue, objectSyncDateHeader_(change.header))
       });
     });
+    document.syncWriteHeaders = rowChanges.map(function (change) {
+      return change.header;
+    });
     changedRows.push(document);
     changedIds[document.documentId] = true;
   });
@@ -330,21 +333,40 @@ function buildObjectSyncPlan_(objects, documents, now, userEmail, operationId) {
   };
 }
 
-/** Пакетно пишет только изменившиеся физические строки, объединяя соседние. */
+/**
+ * Пакетно пишет только разрешённые изменившиеся поля, группируя соседние
+ * физические строки внутри каждого столбца. Остальные столбцы не затрагиваются.
+ */
 function writeObjectSyncFacts_(context, changedRows) {
-  const groups = [];
-  changedRows.slice().sort(function (a, b) { return a.sheetRow - b.sheetRow; })
-    .forEach(function (item) {
+  const writableHeaders = OBJECT_SYNC_FIELDS_.concat([
+    H.UPDATED_AT,
+    H.UPDATED_BY_EMAIL
+  ]);
+  writableHeaders.forEach(function (header) {
+    const columnIndex = objectSyncColumnIndex_(context, header);
+    const items = changedRows.filter(function (item) {
+      return item.syncWriteHeaders.indexOf(header) !== -1;
+    }).sort(function (left, right) {
+      return left.sheetRow - right.sheetRow;
+    });
+    const groups = [];
+    items.forEach(function (item) {
       const group = groups[groups.length - 1];
-      if (group && item.sheetRow === group.startRow + group.rows.length) {
-        group.rows.push(item.row);
+      const value = [item.row[columnIndex]];
+      if (group && item.sheetRow === group.startRow + group.values.length) {
+        group.values.push(value);
       } else {
-        groups.push({ startRow: item.sheetRow, rows: [item.row] });
+        groups.push({ startRow: item.sheetRow, values: [value] });
       }
     });
-  groups.forEach(function (group) {
-    context.sheet.getRange(group.startRow, 1, group.rows.length, context.headers.length)
-      .setValues(group.rows);
+    groups.forEach(function (group) {
+      context.sheet.getRange(
+        group.startRow,
+        columnIndex + 1,
+        group.values.length,
+        1
+      ).setValues(group.values);
+    });
   });
 }
 

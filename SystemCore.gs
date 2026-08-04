@@ -1490,6 +1490,7 @@ function setupSystemDictionaryGuards() {
     }
   ];
   const lastRow = context.sheet.getLastRow();
+  const protectionDescription = 'Системное значение документооборота';
   if (lastRow < context.config.dataStartRow) {
     throw new Error('В справочнике отсутствуют обязательные системные значения.');
   }
@@ -1512,10 +1513,19 @@ function setupSystemDictionaryGuards() {
       cell.setNote(
         'Системно обязательное значение. Не удаляйте и не переименовывайте его.'
       ).setBackground('#fce8e6').setFontColor('#8b0000').setFontWeight('bold');
-      const existing = cell.getProtections(SpreadsheetApp.ProtectionType.RANGE);
-      const protection = existing.length > 0
-        ? existing[0]
-        : cell.protect().setDescription('Системное значение документооборота');
+      const ownProtections = cell
+        .getProtections(SpreadsheetApp.ProtectionType.RANGE)
+        .filter(function (protection) {
+          const protectedRange = protection.getRange();
+          return protection.getDescription() === protectionDescription &&
+            protectedRange.getRow() === cell.getRow() &&
+            protectedRange.getColumn() === cell.getColumn() &&
+            protectedRange.getNumRows() === 1 &&
+            protectedRange.getNumColumns() === 1;
+        });
+      const protection = ownProtections.length > 0
+        ? ownProtections[0]
+        : cell.protect().setDescription(protectionDescription);
       protection.setWarningOnly(true);
     });
     if (!found) {

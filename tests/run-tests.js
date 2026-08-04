@@ -200,4 +200,101 @@ test('20. protected UI files and onOpen are unchanged from merged baseline', () 
   cp.execFileSync('git', ['diff', '--quiet', '36eaaf7', '--', 'Code.gs']);
 });
 
-if (!process.exitCode) console.log(`\n${passed}/20 tests passed.`);
+
+test('21. fact writer preserves unrelated values and formulas', () => {
+  const fixture = syncFixture(
+    Object.assign({}, baseline, { 'Номер договора': 'A-2' }),
+    [document()]
+  );
+  const headers = fixture.headers.concat(['Комментарий', 'Сумма документа']);
+  const commentIndex = headers.indexOf('Комментарий');
+  const formulaIndex = headers.indexOf('Сумма документа');
+  const contractIndex = headers.indexOf('Номер договора');
+  fixture.result.changedRows[0].row.push('Не менять', '=SUM(1;2)');
+  const storedRow = document();
+  const stored = headers.map(header => storedRow[header] === undefined ? '' : storedRow[header]);
+  stored[commentIndex] = 'Не менять';
+  stored[formulaIndex] = '=SUM(1;2)';
+  const headerMap = Object.fromEntries(headers.map((header, index) => [header, index + 1]));
+  const context = {
+    headers,
+    headerMap,
+    sheet: {
+      getRange(startRow, startColumn, rowCount, columnCount) {
+        assert.equal(columnCount, 1, 'writer must only request one permitted column');
+        return {
+          setValues(values) {
+            values.forEach((value, offset) => { stored[startColumn - 1] = value[0]; });
+          }
+        };
+      }
+    }
+  };
+  fixture.ctx.writeObjectSyncFacts_(context, fixture.result.changedRows);
+  assert.equal(stored[contractIndex], 'A-2');
+  assert.equal(stored[commentIndex], 'Не менять');
+  assert.equal(stored[formulaIndex], '=SUM(1;2)');
+});
+
+test('22. dictionary guard never weakens foreign protection and stays idempotent', () => {
+  const ctx = baseContext({ SpreadsheetApp: { ProtectionType: { RANGE: 'RANGE' } } });
+  const description = 'Системное значение документооборота';
+  let created = 0;
+  function protection(desc, row, column) {
+    return {
+      warningCalls: 0,
+      getDescription: () => desc,
+      getRange: () => ({
+        getRow: () => row,
+        getColumn: () => column,
+        getNumRows: () => 1,
+        getNumColumns: () => 1
+      }),
+      setDescription(value) { desc = value; return this; },
+      setWarningOnly() { this.warningCalls++; return this; }
+    };
+  }
+  const foreign = protection('Чужая строгая защита', 3, 1);
+  const own = protection(description, 3, 1);
+  const protectionsByCell = { '3:1': [foreign, own], '3:2': [protection('Чужая', 3, 2)] };
+  function cell(row, column) {
+    return {
+      getRow: () => row,
+      getColumn: () => column,
+      setNote() { return this; },
+      setBackground() { return this; },
+      setFontColor() { return this; },
+      setFontWeight() { return this; },
+      getProtections: () => protectionsByCell[`${row}:${column}`],
+      protect() {
+        created++;
+        const result = protection('', row, column);
+        protectionsByCell[`${row}:${column}`].push(result);
+        return result;
+      }
+    };
+  }
+  const sheet = {
+    getLastRow: () => 3,
+    getRange(row, column, rowCount, columnCount) {
+      if (rowCount === undefined) return cell(row, column);
+      const value = column === 1 ? 'Ожидает заполнения' : 'Активная';
+      return { getValues: () => [[value]] };
+    }
+  };
+  ctx.assertSystemSheetsStructure_ = () => {};
+  ctx.getSystemSheetContext_ = () => ({
+    sheet,
+    config: { dataStartRow: 3 },
+    headers: ['Статус документа', 'Статус записи'],
+    headerMap: { 'Статус документа': 1, 'Статус записи': 2 }
+  });
+  ctx.getSystemColumn_ = (key, header) => header === 'Статус документа' ? 1 : 2;
+  ctx.setupSystemDictionaryGuards();
+  ctx.setupSystemDictionaryGuards();
+  assert.equal(foreign.warningCalls, 0, 'foreign strict protection was weakened');
+  assert.equal(own.warningCalls, 2, 'own protection should be reused');
+  assert.equal(created, 1, 'second run must reuse the function-owned protection');
+});
+
+if (!process.exitCode) console.log(`\n${passed}/22 tests passed.`);
