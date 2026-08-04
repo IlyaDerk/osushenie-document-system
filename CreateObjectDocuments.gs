@@ -4,12 +4,13 @@
  */
 function createMissingDocumentsForAllObjects() {
   const startedAt = new Date();
-  const operationId = generateOperationId_();
+  let operationId = '';
   const userEmail = getActiveUserEmail_();
   let result;
 
   try {
     result = withDocumentLock_(function () {
+      operationId = generateOperationId_(startedAt);
       return createObjectDocumentsUnderLock_(
         operationId,
         startedAt,
@@ -29,6 +30,10 @@ function createMissingDocumentsForAllObjects() {
 
     try {
       withDocumentLock_(function () {
+        if (!operationId) {
+          operationId = generateOperationId_(startedAt);
+          failure.operationRow.operationId = operationId;
+        }
         writeCreationOperationHistory_(failure.operationRow);
       });
     } catch (historyError) {
@@ -592,7 +597,7 @@ function appendPreparedChangeRows_(
       return;
     }
     target.push({
-      changeId: generateChangeId_(),
+      changeId: generateChangeId_(operationId, target.length + 1),
       operationId: operationId,
       changedAt: changedAt,
       userEmail: userEmail,
@@ -772,7 +777,9 @@ function buildCreationReport_(
     });
   }
   if (criticalError) {
-    lines.push('Критическая ошибка: ' + criticalError);
+    lines.push('');
+    lines.push('КРИТИЧЕСКАЯ ОШИБКА');
+    lines.push(criticalError);
   }
   return { status: status, counters: counters, text: lines.join('\n') };
 }
@@ -781,6 +788,16 @@ function buildCreationReport_(
 /** Показывает результат кнопочного запуска. */
 function showCreateDocumentsReport_(report, isError) {
   try {
+    if (isError) {
+      const marker = 'КРИТИЧЕСКАЯ ОШИБКА\n';
+      const position = String(report.text).lastIndexOf(marker);
+      showCriticalOperationError_(
+        'Ошибка создания документов',
+        position < 0 ? report.text : report.text.slice(0, position).trim(),
+        creationCriticalMessage_(report.text)
+      );
+      return;
+    }
     SpreadsheetApp.getUi().alert(
       isError ? 'Ошибка создания документов' : 'Создание документов',
       report.text,
@@ -789,6 +806,13 @@ function showCreateDocumentsReport_(report, isError) {
   } catch (uiError) {
     // Отчёт всё равно возвращается вызывающему коду и пишется в историю.
   }
+}
+
+
+function creationCriticalMessage_(text) {
+  const marker = 'КРИТИЧЕСКАЯ ОШИБКА\n';
+  const position = String(text).lastIndexOf(marker);
+  return position < 0 ? String(text) : String(text).slice(position + marker.length);
 }
 
 
