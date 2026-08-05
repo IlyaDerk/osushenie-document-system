@@ -446,7 +446,88 @@ test('37. duplicate source change ID stops archiving', () => {
     { sheetRow: 4, values: ['CHG-1', new Date(), 'y'] }
   ], state), /повторяется/);
 });
-test('38. protected UI files and onOpen still remain unchanged', () => {
+
+function archiveHeaderErrorFixture() {
+  const ctx = baseContext();
+  const state = { counters: Object.assign(ctx.emptyArchiveCounters_(), {
+    checkedRows: 48,
+    selectedRows: 1,
+    archiveFiles: 1
+  }), warnings: [] };
+  const row = ['CHG-1', new Date('2026-07-31T10:00:00Z'), 'x'];
+  const sourceContext = archiveTestContext(ctx, [row]);
+  const badSheet = archiveMockSheet(sourceContext, []);
+  badSheet.getRange = function (rowNumber, column, rowCount, columnCount) {
+    return {
+      getValues() {
+        if (rowNumber === 2) return [['Повреждённый заголовок', 'Дата и время изменения', 'Новое значение']];
+        return [];
+      },
+      setValues() { throw new Error('Не должна выполняться запись при повреждённом заголовке'); }
+    };
+  };
+  ctx.getOrCreateArchiveSpreadsheet_ = () => ({});
+  ctx.getOrCreateArchiveSheet_ = function (spreadsheet, context) {
+    ctx.ensureArchiveHeaders_(badSheet, context);
+    return badSheet;
+  };
+  let caught;
+  try { ctx.processArchiveMonth_({}, sourceContext, '2026-07', [{ values: row }], state); }
+  catch (error) { caught = error; }
+  assert.ok(caught, 'expected corrupted header error');
+  return { error: caught, state };
+}
+
+test('38. corrupted archive header error preserves checkedRows', () => {
+  const fixture = archiveHeaderErrorFixture();
+  assert.equal(fixture.error.archiveState.counters.checkedRows, 48);
+});
+test('39. corrupted archive header error preserves selectedRows', () => {
+  const fixture = archiveHeaderErrorFixture();
+  assert.equal(fixture.error.archiveState.counters.selectedRows, 1);
+});
+test('40. corrupted archive header error preserves archiveFiles', () => {
+  const fixture = archiveHeaderErrorFixture();
+  assert.equal(fixture.error.archiveState.counters.archiveFiles, 1);
+});
+test('41. corrupted archive header leaves writtenRows and deletedRows zero', () => {
+  const fixture = archiveHeaderErrorFixture();
+  assert.equal(fixture.error.archiveState.counters.writtenRows, 0);
+  assert.equal(fixture.error.archiveState.counters.deletedRows, 0);
+});
+test('42. corrupted archive header keeps original error message', () => {
+  const fixture = archiveHeaderErrorFixture();
+  assert.match(fixture.error.message, /некорректный заголовок/);
+});
+test('43. ordinary Drive or Spreadsheet error inside processArchiveMonth receives archiveState', () => {
+  const ctx = baseContext();
+  const state = { counters: Object.assign(ctx.emptyArchiveCounters_(), { checkedRows: 48, selectedRows: 1, archiveFiles: 1 }), warnings: [] };
+  const sourceContext = archiveTestContext(ctx, [['CHG-1', new Date('2026-07-31T10:00:00Z'), 'x']]);
+  ctx.getOrCreateArchiveSpreadsheet_ = () => { throw new Error('DriveApp недоступен'); };
+  assert.throws(() => ctx.processArchiveMonth_({}, sourceContext, '2026-07', [{ values: sourceContext.sheet._rows[0] }], state), error => {
+    assert.equal(error.message, 'DriveApp недоступен');
+    assert.equal(error.archiveState, state);
+    return true;
+  });
+});
+test('44. runChangeHistoryArchive calls archiveChangeHistoryByDate', () => {
+  const ctx = baseContext();
+  let called = false;
+  ctx.archiveChangeHistoryByDate = () => { called = true; return 'ok'; };
+  assert.equal(ctx.runChangeHistoryArchive(), 'ok');
+  assert.equal(called, true);
+});
+test('45. processArchiveMonth preserves existing archiveState object', () => {
+  const ctx = baseContext();
+  const state = { counters: ctx.emptyArchiveCounters_(), warnings: [] };
+  const sourceContext = archiveTestContext(ctx, [['CHG-1', new Date('2026-07-31T10:00:00Z'), 'x']]);
+  const existing = new Error('already wrapped');
+  existing.archiveState = state;
+  ctx.getOrCreateArchiveSpreadsheet_ = () => { throw existing; };
+  assert.throws(() => ctx.processArchiveMonth_({}, sourceContext, '2026-07', [{ values: sourceContext.sheet._rows[0] }], state), error => error.archiveState === state && error.message === 'already wrapped');
+});
+
+test('46. protected UI files and onOpen still remain unchanged', () => {
   for (const f of ['Code.gs', 'OperatorSidebar.html']) cp.execFileSync('git', ['diff', '--quiet', '36eaaf7', '--', f]);
 });
 
@@ -479,4 +560,4 @@ function archiveMockSheet(context, initialRows) {
   };
 }
 
-if (!process.exitCode) console.log(`\n${passed}/38 tests passed.`);
+if (!process.exitCode) console.log(`\n${passed}/46 tests passed.`);

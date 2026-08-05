@@ -56,6 +56,11 @@ function archiveChangeHistoryByDate() {
   }
 }
 
+/** Публичная обёртка для назначения кнопке/рисунку Google Sheets. */
+function runChangeHistoryArchive() {
+  return archiveChangeHistoryByDate();
+}
+
 /** Настраивает папку Drive для архивных Spreadsheet-файлов. */
 function setupChangeHistoryArchiveFolder() {
   const ui = SpreadsheetApp.getUi();
@@ -119,33 +124,40 @@ function archiveChangeHistoryUnderLock_(operationId, startedAt, userEmail, cutof
 }
 
 function processArchiveMonth_(folder, sourceContext, monthKey, items, state) {
-  const spreadsheet = getOrCreateArchiveSpreadsheet_(folder, monthKey);
-  const archiveSheet = getOrCreateArchiveSheet_(spreadsheet, sourceContext);
-  const archiveContext = buildArchiveContext_(archiveSheet, sourceContext);
-  const existing = readArchiveExistingById_(archiveContext);
-  const rowsToWrite = [];
-  items.forEach(function (item) {
-    const id = archiveChangeId_(sourceContext, item.values);
-    if (existing[id]) {
-      if (!archiveRowsEqual_(existing[id], item.values)) {
-        archiveFail_(state, 'В архиве ' + monthKey + ' уже есть ID изменения «' + id + '» с отличающимися данными.');
+  try {
+    const spreadsheet = getOrCreateArchiveSpreadsheet_(folder, monthKey);
+    const archiveSheet = getOrCreateArchiveSheet_(spreadsheet, sourceContext);
+    const archiveContext = buildArchiveContext_(archiveSheet, sourceContext);
+    const existing = readArchiveExistingById_(archiveContext);
+    const rowsToWrite = [];
+    items.forEach(function (item) {
+      const id = archiveChangeId_(sourceContext, item.values);
+      if (existing[id]) {
+        if (!archiveRowsEqual_(existing[id], item.values)) {
+          archiveFail_(state, 'В архиве ' + monthKey + ' уже есть ID изменения «' + id + '» с отличающимися данными.');
+        }
+        state.counters.alreadyArchived += 1;
+        return;
       }
-      state.counters.alreadyArchived += 1;
-      return;
+      rowsToWrite.push(item.values);
+    });
+    if (rowsToWrite.length > 0) {
+      const startRow = Math.max(archiveSheet.getLastRow() + 1, sourceContext.config.dataStartRow);
+      archiveSheet.getRange(startRow, 1, rowsToWrite.length, sourceContext.headers.length).setValues(rowsToWrite);
+      state.counters.writtenRows += rowsToWrite.length;
     }
-    rowsToWrite.push(item.values);
-  });
-  if (rowsToWrite.length > 0) {
-    const startRow = Math.max(archiveSheet.getLastRow() + 1, sourceContext.config.dataStartRow);
-    archiveSheet.getRange(startRow, 1, rowsToWrite.length, sourceContext.headers.length).setValues(rowsToWrite);
-    state.counters.writtenRows += rowsToWrite.length;
+    const after = readArchiveExistingById_(archiveContext);
+    items.forEach(function (item) {
+      const id = archiveChangeId_(sourceContext, item.values);
+      if (!after[id]) archiveFail_(state, 'После записи архив ' + monthKey + ' не содержит ID изменения «' + id + '».');
+      if (!archiveRowsEqual_(after[id], item.values)) archiveFail_(state, 'После записи архив ' + monthKey + ' содержит отличающиеся данные для ID изменения «' + id + '».');
+    });
+  } catch (error) {
+    if (!error.archiveState) {
+      error.archiveState = state;
+    }
+    throw error;
   }
-  const after = readArchiveExistingById_(archiveContext);
-  items.forEach(function (item) {
-    const id = archiveChangeId_(sourceContext, item.values);
-    if (!after[id]) archiveFail_(state, 'После записи архив ' + monthKey + ' не содержит ID изменения «' + id + '».');
-    if (!archiveRowsEqual_(after[id], item.values)) archiveFail_(state, 'После записи архив ' + monthKey + ' содержит отличающиеся данные для ID изменения «' + id + '».');
-  });
 }
 
 function readArchiveSourceRows_(context) {
