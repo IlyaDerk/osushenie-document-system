@@ -183,8 +183,7 @@ function getOrCreateArchiveSpreadsheet_(folder, monthKey) {
   if (files.hasNext()) return SpreadsheetApp.openById(files.next().getId());
   const spreadsheet = SpreadsheetApp.create(name);
   const file = DriveApp.getFileById(spreadsheet.getId());
-  folder.addFile(file);
-  try { DriveApp.getRootFolder().removeFile(file); } catch (error) {}
+  file.moveTo(folder);
   return spreadsheet;
 }
 
@@ -239,10 +238,14 @@ function deleteArchiveSourceRows_(sheet, rowNumbers) {
 }
 
 function parseArchiveCutoffDate_(text) {
-  const match = String(text || '').trim().match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
-  if (!match) throw new Error('Дата отсечения должна быть в формате ДД.ММ.ГГГГ.');
-  const date = new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
-  if (date.getFullYear() !== Number(match[3]) || date.getMonth() !== Number(match[2]) - 1 || date.getDate() !== Number(match[1])) {
+  const normalized = String(text || '').trim();
+  if (!/^(\d{2})\.(\d{2})\.(\d{4})$/.test(normalized)) {
+    throw new Error('Дата отсечения должна быть в формате ДД.ММ.ГГГГ.');
+  }
+  const timezone = getSystemSpreadsheet_().getSpreadsheetTimeZone();
+  const date = Utilities.parseDate(normalized, timezone, 'dd.MM.yyyy');
+  const roundTrip = Utilities.formatDate(date, timezone, 'dd.MM.yyyy');
+  if (roundTrip !== normalized) {
     throw new Error('Дата отсечения некорректна: ' + text);
   }
   return date;

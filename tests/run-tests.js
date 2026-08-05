@@ -17,7 +17,25 @@ function baseContext(extra = {}) {
       formatDate(date, zone, pattern) {
         if (pattern === 'yyyyMMdd') return '20260804';
         if (pattern === 'yyyy-MM') return date.toISOString().slice(0, 7);
+        if (pattern === 'dd.MM.yyyy') {
+          const parts = new Intl.DateTimeFormat('en-GB', { timeZone: zone, day: '2-digit', month: '2-digit', year: 'numeric' }).formatToParts(date);
+          const map = Object.fromEntries(parts.map(part => [part.type, part.value]));
+          return `${map.day}.${map.month}.${map.year}`;
+        }
         return date.toISOString();
+      },
+      parseDate(text, zone, pattern) {
+        if (pattern !== 'dd.MM.yyyy') throw new Error('unexpected pattern');
+        const [day, month, year] = text.split('.').map(Number);
+        const utc = Date.UTC(year, month - 1, day, 0, 0, 0);
+        const probe = new Date(utc);
+        const local = new Intl.DateTimeFormat('en-US', {
+          timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'
+        }).formatToParts(probe);
+        const map = Object.fromEntries(local.map(part => [part.type, part.value]));
+        const asUtc = Date.UTC(Number(map.year), Number(map.month) - 1, Number(map.day), Number(map.hour), Number(map.minute), Number(map.second));
+        return new Date(utc - (asUtc - utc));
       }
     },
     PropertiesService: {
@@ -356,11 +374,20 @@ test('28. sync fields counter counts only changed business fields', () => {
 });
 test('29. archive cutoff selects only rows older than cutoff', () => {
   const ctx = baseContext();
+  ctx.getSystemSpreadsheet_ = () => ({ getSpreadsheetTimeZone: () => 'UTC' });
   const cutoff = ctx.parseArchiveCutoffDate_('01.08.2026');
   assert.ok(new Date(2026, 6, 31).getTime() < cutoff.getTime());
   assert.ok(!(new Date(2026, 7, 1).getTime() < cutoff.getTime()));
 });
-test('30. archive rows older than cutoff are grouped by month', () => {
+test('30. archive cutoff uses spreadsheet timezone and keeps cutoff-day rows active', () => {
+  const ctx = baseContext();
+  ctx.getSystemSpreadsheet_ = () => ({ getSpreadsheetTimeZone: () => 'Asia/Tokyo' });
+  const cutoff = ctx.parseArchiveCutoffDate_('01.08.2026');
+  assert.equal(ctx.Utilities.formatDate(cutoff, 'Asia/Tokyo', 'dd.MM.yyyy'), '01.08.2026');
+  assert.ok(new Date('2026-07-31T14:59:59Z').getTime() < cutoff.getTime());
+  assert.ok(!(new Date('2026-07-31T15:00:00Z').getTime() < cutoff.getTime()));
+});
+test('31. archive rows older than cutoff are grouped by month', () => {
   const ctx = baseContext();
   ctx.getSystemSpreadsheet_ = () => ({ getSpreadsheetTimeZone: () => 'UTC' });
   const context = { headerMap: { 'Дата и время изменения': 2 } };
@@ -370,7 +397,7 @@ test('30. archive rows older than cutoff are grouped by month', () => {
   ]);
   assert.deepEqual(Object.keys(groups).sort(), ['2026-07', '2026-08']);
 });
-test('31. archive writer skips duplicate writes for identical existing ID', () => {
+test('32. archive writer skips duplicate writes for identical existing ID', () => {
   const ctx = baseContext();
   const state = { counters: ctx.emptyArchiveCounters_(), warnings: [] };
   const row = ['CHG-1', new Date('2026-07-31T10:00:00Z'), 'x'];
@@ -382,7 +409,7 @@ test('31. archive writer skips duplicate writes for identical existing ID', () =
   assert.equal(state.counters.alreadyArchived, 1);
   assert.equal(state.counters.writtenRows, 0);
 });
-test('32. matching ID with different data is a critical archive error', () => {
+test('33. matching ID with different data is a critical archive error', () => {
   const ctx = baseContext();
   const state = { counters: ctx.emptyArchiveCounters_(), warnings: [] };
   const row = ['CHG-1', new Date('2026-07-31T10:00:00Z'), 'source'];
@@ -392,25 +419,25 @@ test('32. matching ID with different data is a critical archive error', () => {
   ctx.getOrCreateArchiveSheet_ = () => archiveSheet;
   assert.throws(() => ctx.processArchiveMonth_({}, sourceContext, '2026-07', [{ values: row }], state), /отличающимися данными/);
 });
-test('33. archive write error keeps source rows undeleted', () => {
+test('34. archive write error keeps source rows undeleted', () => {
   const ctx = baseContext();
   const text = fs.readFileSync('ArchiveChangeHistory.gs', 'utf8');
   assert.ok(text.indexOf('processArchiveMonth_') < text.indexOf('deleteArchiveSourceRows_'));
 });
-test('34. source rows are deleted only after archive ID verification', () => {
+test('35. source rows are deleted only after archive ID verification', () => {
   const text = fs.readFileSync('ArchiveChangeHistory.gs', 'utf8');
   const callIndex = text.indexOf('processArchiveMonth_(folder, context');
   const deleteIndex = text.indexOf('deleteArchiveSourceRows_(context.sheet');
   const verifyIndex = text.indexOf('const after = readArchiveExistingById_', text.indexOf('function processArchiveMonth_'));
   assert.ok(callIndex >= 0 && deleteIndex > callIndex && verifyIndex >= 0);
 });
-test('35. empty source change ID stops archiving', () => {
+test('36. empty source change ID stops archiving', () => {
   const ctx = baseContext();
   ctx.getSystemSheetContext_ = () => archiveTestContext(ctx, []);
   const state = { counters: ctx.emptyArchiveCounters_(), warnings: [] };
   assert.throws(() => ctx.assertArchiveSourceIds_(archiveTestContext(ctx, []), [{ sheetRow: 3, values: ['', new Date(), 'x'] }], state), /пустой ID изменения/);
 });
-test('36. duplicate source change ID stops archiving', () => {
+test('37. duplicate source change ID stops archiving', () => {
   const ctx = baseContext();
   ctx.getSystemSheetContext_ = () => archiveTestContext(ctx, []);
   const state = { counters: ctx.emptyArchiveCounters_(), warnings: [] };
@@ -419,7 +446,7 @@ test('36. duplicate source change ID stops archiving', () => {
     { sheetRow: 4, values: ['CHG-1', new Date(), 'y'] }
   ], state), /повторяется/);
 });
-test('37. protected UI files and onOpen still remain unchanged', () => {
+test('38. protected UI files and onOpen still remain unchanged', () => {
   for (const f of ['Code.gs', 'OperatorSidebar.html']) cp.execFileSync('git', ['diff', '--quiet', '36eaaf7', '--', f]);
 });
 
@@ -452,4 +479,4 @@ function archiveMockSheet(context, initialRows) {
   };
 }
 
-if (!process.exitCode) console.log(`\n${passed}/37 tests passed.`);
+if (!process.exitCode) console.log(`\n${passed}/38 tests passed.`);
