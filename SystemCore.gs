@@ -168,6 +168,7 @@ const SYSTEM_CONFIG = {
       'Создание недостающих документов по объектам',
 
     OBJECT_DATA_SYNC_OPERATION_TYPE: 'Синхронизация данных объектов',
+    CHANGE_HISTORY_ARCHIVE_OPERATION_TYPE: 'Архивация истории изменений',
 
     CHANGE_ACTION_CREATE: 'Создание',
     CHANGE_ACTION_SYNC: 'Синхронизация',
@@ -175,6 +176,7 @@ const SYSTEM_CONFIG = {
     OPERATOR_CARD_SOURCE: 'Карточка операциониста',
     OBJECT_CREATION_SOURCE: 'Создание документов по объекту',
     OBJECT_DATA_SYNC_SOURCE: 'Синхронизация данных объектов',
+    CHANGE_HISTORY_ARCHIVE_SOURCE: 'Архивация истории изменений',
     OBJECT_SHEET_CHANGE_SOURCE: 'Лист объектов',
     AUTOMATION_SOURCE: 'Автоматизация'
   },

@@ -556,7 +556,7 @@ function prepareDocumentRows_(
       row[creationColumnIndex_(context, header)] = values[header];
     });
     documentRows.push(row);
-    appendPreparedChangeRows_(
+    appendPreparedCreationChangeRow_(
       changeRows,
       values,
       documentId,
@@ -571,8 +571,8 @@ function prepareDocumentRows_(
 }
 
 
-/** Создаёт историю только для автоматически заполненных непустых полей. */
-function appendPreparedChangeRows_(
+/** Создаёт одну логическую запись истории на созданный документ. */
+function appendPreparedCreationChangeRow_(
   target,
   values,
   documentId,
@@ -582,41 +582,55 @@ function appendPreparedChangeRows_(
   userEmail,
   changedAt
 ) {
-  const objectDateHeaders = {};
-  objectDateHeaders[H.WORK_START_DATE] = true;
-  objectDateHeaders[H.WORK_END_PLAN] = true;
-  objectDateHeaders[H.WORK_END_FACT] = true;
-  const systemDateHeaders = {};
-  systemDateHeaders[H.CREATED_AT] = true;
-  systemDateHeaders[H.UPDATED_AT] = true;
-  systemDateHeaders[H.DOCUMENT_STATUS_CHANGED_AT] = true;
-
-  Object.keys(values).forEach(function (header) {
-    const value = values[header];
-    if (creationValueIsEmpty_(value)) {
-      return;
-    }
-    target.push({
-      changeId: generateChangeId_(operationId, target.length + 1),
-      operationId: operationId,
-      changedAt: changedAt,
-      userEmail: userEmail,
-      documentId: documentId,
-      objectId: objectId,
-      factRow: factRow,
-      fieldName: header,
-      newValue: formatCreationHistoryValue_(
-        value,
-        objectDateHeaders[header]
-          ? 'date'
-          : systemDateHeaders[header]
-            ? 'datetime'
-            : 'text'
-      )
-    });
+  target.push({
+    changeId: generateChangeId_(operationId, target.length + 1),
+    operationId: operationId,
+    changedAt: changedAt,
+    userEmail: userEmail,
+    documentId: documentId,
+    objectId: objectId,
+    factRow: factRow,
+    fieldName: 'Создание документа',
+    newValue: buildCreationInitialSnapshot_(values)
   });
 }
 
+
+/** Формирует компактный многострочный снимок непустых начальных полей. */
+function buildCreationInitialSnapshot_(values) {
+  const dateHeaders = {};
+  dateHeaders[H.WORK_START_DATE] = true;
+  dateHeaders[H.WORK_END_PLAN] = true;
+  dateHeaders[H.WORK_END_FACT] = true;
+  const snapshotHeaders = [
+    H.DOCUMENT_ID,
+    H.OBJECT_ID,
+    H.DOCUMENT_TYPE,
+    H.DOCUMENT_TYPE_ID,
+    H.CONTRACT_NUMBER,
+    H.DOCUMENT_STATUS,
+    H.OBJECT_STATUS,
+    H.WORK_START_DATE,
+    H.WORK_END_PLAN,
+    H.WORK_END_FACT,
+    H.RESPONSIBLE_FOREMAN,
+    H.RESPONSIBLE_FOREMAN_ID,
+    H.CREATION_SOURCE,
+    H.RECORD_STATUS
+  ];
+  return snapshotHeaders.reduce(function (lines, header) {
+    const value = values[header];
+    if (!creationValueIsEmpty_(value)) {
+      lines.push(
+        header + ': ' + formatCreationHistoryValue_(
+          value,
+          dateHeaders[header] ? 'date' : 'text'
+        )
+      );
+    }
+    return lines;
+  }, []).join('\n');
+}
 
 /** Пакетно записывает историю изменений. */
 function writeCreationChangeHistory_(changes) {

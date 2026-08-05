@@ -3,7 +3,7 @@ const assert = require('assert');
 const fs = require('fs');
 const vm = require('vm');
 const cp = require('child_process');
-const files = ['SystemCore.gs', 'CreateObjectDocuments.gs', 'SyncObjectData.gs'];
+const files = ['SystemCore.gs', 'CreateObjectDocuments.gs', 'SyncObjectData.gs', 'ArchiveChangeHistory.gs'];
 const source = files.map(f => fs.readFileSync(f, 'utf8')).join('\n');
 let passed = 0;
 function test(name, fn) {
@@ -16,6 +16,7 @@ function baseContext(extra = {}) {
     Utilities: {
       formatDate(date, zone, pattern) {
         if (pattern === 'yyyyMMdd') return '20260804';
+        if (pattern === 'yyyy-MM') return date.toISOString().slice(0, 7);
         return date.toISOString();
       }
     },
@@ -297,4 +298,158 @@ test('22. dictionary guard never weakens foreign protection and stays idempotent
   assert.equal(created, 1, 'second run must reuse the function-owned protection');
 });
 
-if (!process.exitCode) console.log(`\n${passed}/22 tests passed.`);
+
+function creationPrepareFixture(count) {
+  const ctx = baseContext();
+  ctx.getSystemSpreadsheet_ = () => ({ getSpreadsheetTimeZone: () => 'UTC' });
+  const headers = [
+    'ID документа','ID объекта','Тип документа','ID типа документа','Номер договора','Статус документа',
+    'Статус объекта','Дата начала работ','Дата окончания (по плану)','Дата окончания (по факту)',
+    'Дата создания','Дата обновления','Кто обновил (email)','Ответственный прораб','ID ответственного прораба',
+    'Дата изменения статуса документа','Источник создания','Статус записи'
+  ];
+  const context = { headers, headerMap: Object.fromEntries(headers.map((h, i) => [h, i + 1])) };
+  const missing = Array.from({ length: count }, (_, i) => ({
+    object: {
+      id: 'OBJ' + String(i + 1).padStart(2, '0'), contractNumber: 'DOG-' + (i + 1),
+      objectStatus: 'В работе', workStartDate: new Date('2026-08-01T00:00:00Z'),
+      workEndPlan: new Date('2026-08-31T00:00:00Z'), workEndFact: i === 0 ? new Date('2026-08-20T00:00:00Z') : '',
+      responsibleForeman: 'Иванов', responsibleForemanId: 'ST-1'
+    },
+    rule: { id: 'DT-1', name: 'Акт' }
+  }));
+  return ctx.prepareDocumentRows_(missing, { documentIds: {} }, context, 4, new Date('2026-08-04T10:00:00Z'), 'tester@example.com', 'OP-20260804-0001');
+}
+
+test('23. one created document produces one history row', () => {
+  const prepared = creationPrepareFixture(1);
+  assert.equal(prepared.documentRows.length, 1);
+  assert.equal(prepared.changeRows.length, 1);
+  assert.equal(prepared.changeRows[0].fieldName, 'Создание документа');
+});
+test('24. 18 created documents produce 18 history rows, not field-per-value rows', () => {
+  const prepared = creationPrepareFixture(18);
+  assert.equal(prepared.documentRows.length, 18);
+  assert.equal(prepared.changeRows.length, 18);
+  assert.notEqual(prepared.changeRows.length, 324);
+});
+test('25. initial creation snapshot contains main nonempty fields', () => {
+  const snapshot = creationPrepareFixture(1).changeRows[0].newValue;
+  ['ID документа: DOC-OBJ01-0001','ID объекта: OBJ01','Тип документа: Акт','ID типа документа: DT-1',
+   'Номер договора: DOG-1','Статус документа: Ожидает заполнения','Статус объекта: В работе',
+   'Дата начала работ:','Дата окончания (по плану):','Дата окончания (по факту):',
+   'Ответственный прораб: Иванов','ID ответственного прораба: ST-1','Источник создания: Создание документов по объекту',
+   'Статус записи: Активная'].forEach(part => assert.ok(snapshot.includes(part), part));
+});
+test('26. sync does not create separate history row for update timestamp', () => {
+  const fixture = syncFixture(Object.assign({}, baseline, { 'Номер договора': 'A-2' }), [document()]);
+  assert.ok(!fixture.result.changes.some(c => c.fieldName === 'Дата обновления'));
+});
+test('27. sync does not create separate history row for update email', () => {
+  const fixture = syncFixture(Object.assign({}, baseline, { 'Номер договора': 'A-2' }), [document()]);
+  assert.ok(!fixture.result.changes.some(c => c.fieldName === 'Кто обновил (email)'));
+});
+test('28. sync fields counter counts only changed business fields', () => {
+  const fixture = syncFixture(Object.assign({}, baseline, { 'Номер договора': 'A-2' }), [document()]);
+  assert.equal(fixture.result.changedRows.length, 1);
+  assert.equal(fixture.result.changes.length, 1);
+});
+test('29. archive cutoff selects only rows older than cutoff', () => {
+  const ctx = baseContext();
+  const cutoff = ctx.parseArchiveCutoffDate_('01.08.2026');
+  assert.ok(new Date(2026, 6, 31).getTime() < cutoff.getTime());
+  assert.ok(!(new Date(2026, 7, 1).getTime() < cutoff.getTime()));
+});
+test('30. archive rows older than cutoff are grouped by month', () => {
+  const ctx = baseContext();
+  ctx.getSystemSpreadsheet_ = () => ({ getSpreadsheetTimeZone: () => 'UTC' });
+  const context = { headerMap: { 'Дата и время изменения': 2 } };
+  const groups = ctx.groupArchiveRowsByMonth_(context, [
+    { values: ['CHG-1', new Date('2026-07-31T10:00:00Z')] },
+    { values: ['CHG-2', new Date('2026-08-01T10:00:00Z')] }
+  ]);
+  assert.deepEqual(Object.keys(groups).sort(), ['2026-07', '2026-08']);
+});
+test('31. archive writer skips duplicate writes for identical existing ID', () => {
+  const ctx = baseContext();
+  const state = { counters: ctx.emptyArchiveCounters_(), warnings: [] };
+  const row = ['CHG-1', new Date('2026-07-31T10:00:00Z'), 'x'];
+  const sourceContext = archiveTestContext(ctx, [row]);
+  const archiveSheet = archiveMockSheet(sourceContext, [row]);
+  ctx.getOrCreateArchiveSpreadsheet_ = () => ({ marker: true });
+  ctx.getOrCreateArchiveSheet_ = () => archiveSheet;
+  ctx.processArchiveMonth_({}, sourceContext, '2026-07', [{ values: row }], state);
+  assert.equal(state.counters.alreadyArchived, 1);
+  assert.equal(state.counters.writtenRows, 0);
+});
+test('32. matching ID with different data is a critical archive error', () => {
+  const ctx = baseContext();
+  const state = { counters: ctx.emptyArchiveCounters_(), warnings: [] };
+  const row = ['CHG-1', new Date('2026-07-31T10:00:00Z'), 'source'];
+  const sourceContext = archiveTestContext(ctx, [row]);
+  const archiveSheet = archiveMockSheet(sourceContext, [['CHG-1', new Date('2026-07-31T10:00:00Z'), 'archive']]);
+  ctx.getOrCreateArchiveSpreadsheet_ = () => ({});
+  ctx.getOrCreateArchiveSheet_ = () => archiveSheet;
+  assert.throws(() => ctx.processArchiveMonth_({}, sourceContext, '2026-07', [{ values: row }], state), /отличающимися данными/);
+});
+test('33. archive write error keeps source rows undeleted', () => {
+  const ctx = baseContext();
+  const text = fs.readFileSync('ArchiveChangeHistory.gs', 'utf8');
+  assert.ok(text.indexOf('processArchiveMonth_') < text.indexOf('deleteArchiveSourceRows_'));
+});
+test('34. source rows are deleted only after archive ID verification', () => {
+  const text = fs.readFileSync('ArchiveChangeHistory.gs', 'utf8');
+  const callIndex = text.indexOf('processArchiveMonth_(folder, context');
+  const deleteIndex = text.indexOf('deleteArchiveSourceRows_(context.sheet');
+  const verifyIndex = text.indexOf('const after = readArchiveExistingById_', text.indexOf('function processArchiveMonth_'));
+  assert.ok(callIndex >= 0 && deleteIndex > callIndex && verifyIndex >= 0);
+});
+test('35. empty source change ID stops archiving', () => {
+  const ctx = baseContext();
+  ctx.getSystemSheetContext_ = () => archiveTestContext(ctx, []);
+  const state = { counters: ctx.emptyArchiveCounters_(), warnings: [] };
+  assert.throws(() => ctx.assertArchiveSourceIds_(archiveTestContext(ctx, []), [{ sheetRow: 3, values: ['', new Date(), 'x'] }], state), /пустой ID изменения/);
+});
+test('36. duplicate source change ID stops archiving', () => {
+  const ctx = baseContext();
+  ctx.getSystemSheetContext_ = () => archiveTestContext(ctx, []);
+  const state = { counters: ctx.emptyArchiveCounters_(), warnings: [] };
+  assert.throws(() => ctx.assertArchiveSourceIds_(archiveTestContext(ctx, []), [
+    { sheetRow: 3, values: ['CHG-1', new Date(), 'x'] },
+    { sheetRow: 4, values: ['CHG-1', new Date(), 'y'] }
+  ], state), /повторяется/);
+});
+test('37. protected UI files and onOpen still remain unchanged', () => {
+  for (const f of ['Code.gs', 'OperatorSidebar.html']) cp.execFileSync('git', ['diff', '--quiet', '36eaaf7', '--', f]);
+});
+
+function archiveTestContext(ctx, rows) {
+  const headers = ['ID изменения', 'Дата и время изменения', 'Новое значение'];
+  return {
+    sheet: archiveMockSheet({ headers, config: { dataStartRow: 3, headerRow: 2 } }, rows),
+    config: { dataStartRow: 3, headerRow: 2, name: 'История изменений' },
+    headers,
+    headerMap: Object.fromEntries(headers.map((h, i) => [h, i + 1]))
+  };
+}
+function archiveMockSheet(context, initialRows) {
+  const rows = initialRows.map(r => r.slice());
+  return {
+    getLastRow: () => rows.length + 2,
+    getRange(row, column, rowCount, columnCount) {
+      return {
+        getValues() {
+          if (row === 2) return [context.headers.slice(0, columnCount || context.headers.length)];
+          return rows.slice(row - 3, row - 3 + rowCount).map(r => r.slice(column - 1, column - 1 + columnCount));
+        },
+        setValues(values) {
+          values.forEach((value, offset) => { rows[row - 3 + offset] = value.slice(); });
+        }
+      };
+    },
+    deleteRows(start, count) { rows.splice(start - 3, count); },
+    _rows: rows
+  };
+}
+
+if (!process.exitCode) console.log(`\n${passed}/37 tests passed.`);

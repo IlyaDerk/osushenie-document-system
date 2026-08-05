@@ -294,6 +294,7 @@ function buildObjectSyncPlan_(objects, documents, now, userEmail, operationId) {
       }
     });
     if (rowChanges.length === 0) return;
+    const businessChanges = rowChanges.slice();
     const updatedAtIndex = documents.indexes[H.UPDATED_AT];
     rowChanges.push({ header: H.UPDATED_AT, oldValue: document.row[updatedAtIndex], newValue: now });
     document.row[updatedAtIndex] = now;
@@ -306,7 +307,7 @@ function buildObjectSyncPlan_(objects, documents, now, userEmail, operationId) {
       });
       document.row[updatedByIndex] = userEmail;
     }
-    rowChanges.forEach(function (change) {
+    businessChanges.forEach(function (change) {
       changes.push({
         changeId: generateChangeId_(operationId, changes.length + 1),
         operationId: operationId,
