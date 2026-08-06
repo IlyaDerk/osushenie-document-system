@@ -4,12 +4,13 @@
  */
 function createMissingDocumentsForAllObjects() {
   const startedAt = new Date();
-  const operationId = generateOperationId_();
+  let operationId = '';
   const userEmail = getActiveUserEmail_();
   let result;
 
   try {
     result = withDocumentLock_(function () {
+      operationId = generateOperationId_(startedAt);
       return createObjectDocumentsUnderLock_(
         operationId,
         startedAt,
@@ -29,6 +30,10 @@ function createMissingDocumentsForAllObjects() {
 
     try {
       withDocumentLock_(function () {
+        if (!operationId) {
+          operationId = generateOperationId_(startedAt);
+          failure.operationRow.operationId = operationId;
+        }
         writeCreationOperationHistory_(failure.operationRow);
       });
     } catch (historyError) {
@@ -551,7 +556,7 @@ function prepareDocumentRows_(
       row[creationColumnIndex_(context, header)] = values[header];
     });
     documentRows.push(row);
-    appendPreparedChangeRows_(
+    appendPreparedCreationChangeRow_(
       changeRows,
       values,
       documentId,
@@ -566,8 +571,8 @@ function prepareDocumentRows_(
 }
 
 
-/** Создаёт историю только для автоматически заполненных непустых полей. */
-function appendPreparedChangeRows_(
+/** Создаёт одну логическую запись истории на созданный документ. */
+function appendPreparedCreationChangeRow_(
   target,
   values,
   documentId,
@@ -577,41 +582,55 @@ function appendPreparedChangeRows_(
   userEmail,
   changedAt
 ) {
-  const objectDateHeaders = {};
-  objectDateHeaders[H.WORK_START_DATE] = true;
-  objectDateHeaders[H.WORK_END_PLAN] = true;
-  objectDateHeaders[H.WORK_END_FACT] = true;
-  const systemDateHeaders = {};
-  systemDateHeaders[H.CREATED_AT] = true;
-  systemDateHeaders[H.UPDATED_AT] = true;
-  systemDateHeaders[H.DOCUMENT_STATUS_CHANGED_AT] = true;
-
-  Object.keys(values).forEach(function (header) {
-    const value = values[header];
-    if (creationValueIsEmpty_(value)) {
-      return;
-    }
-    target.push({
-      changeId: generateChangeId_(),
-      operationId: operationId,
-      changedAt: changedAt,
-      userEmail: userEmail,
-      documentId: documentId,
-      objectId: objectId,
-      factRow: factRow,
-      fieldName: header,
-      newValue: formatCreationHistoryValue_(
-        value,
-        objectDateHeaders[header]
-          ? 'date'
-          : systemDateHeaders[header]
-            ? 'datetime'
-            : 'text'
-      )
-    });
+  target.push({
+    changeId: generateChangeId_(operationId, target.length + 1),
+    operationId: operationId,
+    changedAt: changedAt,
+    userEmail: userEmail,
+    documentId: documentId,
+    objectId: objectId,
+    factRow: factRow,
+    fieldName: 'Создание документа',
+    newValue: buildCreationInitialSnapshot_(values)
   });
 }
 
+
+/** Формирует компактный многострочный снимок непустых начальных полей. */
+function buildCreationInitialSnapshot_(values) {
+  const dateHeaders = {};
+  dateHeaders[H.WORK_START_DATE] = true;
+  dateHeaders[H.WORK_END_PLAN] = true;
+  dateHeaders[H.WORK_END_FACT] = true;
+  const snapshotHeaders = [
+    H.DOCUMENT_ID,
+    H.OBJECT_ID,
+    H.DOCUMENT_TYPE,
+    H.DOCUMENT_TYPE_ID,
+    H.CONTRACT_NUMBER,
+    H.DOCUMENT_STATUS,
+    H.OBJECT_STATUS,
+    H.WORK_START_DATE,
+    H.WORK_END_PLAN,
+    H.WORK_END_FACT,
+    H.RESPONSIBLE_FOREMAN,
+    H.RESPONSIBLE_FOREMAN_ID,
+    H.CREATION_SOURCE,
+    H.RECORD_STATUS
+  ];
+  return snapshotHeaders.reduce(function (lines, header) {
+    const value = values[header];
+    if (!creationValueIsEmpty_(value)) {
+      lines.push(
+        header + ': ' + formatCreationHistoryValue_(
+          value,
+          dateHeaders[header] ? 'date' : 'text'
+        )
+      );
+    }
+    return lines;
+  }, []).join('\n');
+}
 
 /** Пакетно записывает историю изменений. */
 function writeCreationChangeHistory_(changes) {
@@ -772,7 +791,9 @@ function buildCreationReport_(
     });
   }
   if (criticalError) {
-    lines.push('Критическая ошибка: ' + criticalError);
+    lines.push('');
+    lines.push('КРИТИЧЕСКАЯ ОШИБКА');
+    lines.push(criticalError);
   }
   return { status: status, counters: counters, text: lines.join('\n') };
 }
@@ -781,6 +802,16 @@ function buildCreationReport_(
 /** Показывает результат кнопочного запуска. */
 function showCreateDocumentsReport_(report, isError) {
   try {
+    if (isError) {
+      const marker = 'КРИТИЧЕСКАЯ ОШИБКА\n';
+      const position = String(report.text).lastIndexOf(marker);
+      showCriticalOperationError_(
+        'Ошибка создания документов',
+        position < 0 ? report.text : report.text.slice(0, position).trim(),
+        creationCriticalMessage_(report.text)
+      );
+      return;
+    }
     SpreadsheetApp.getUi().alert(
       isError ? 'Ошибка создания документов' : 'Создание документов',
       report.text,
@@ -789,6 +820,13 @@ function showCreateDocumentsReport_(report, isError) {
   } catch (uiError) {
     // Отчёт всё равно возвращается вызывающему коду и пишется в историю.
   }
+}
+
+
+function creationCriticalMessage_(text) {
+  const marker = 'КРИТИЧЕСКАЯ ОШИБКА\n';
+  const position = String(text).lastIndexOf(marker);
+  return position < 0 ? String(text) : String(text).slice(position + marker.length);
 }
 
 

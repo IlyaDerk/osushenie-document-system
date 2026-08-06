@@ -167,10 +167,17 @@ const SYSTEM_CONFIG = {
     OBJECT_DOCUMENT_CREATION_OPERATION_TYPE:
       'Создание недостающих документов по объектам',
 
+    OBJECT_DATA_SYNC_OPERATION_TYPE: 'Синхронизация данных объектов',
+    CHANGE_HISTORY_ARCHIVE_OPERATION_TYPE: 'Архивация истории изменений',
+
     CHANGE_ACTION_CREATE: 'Создание',
+    CHANGE_ACTION_SYNC: 'Синхронизация',
 
     OPERATOR_CARD_SOURCE: 'Карточка операциониста',
     OBJECT_CREATION_SOURCE: 'Создание документов по объекту',
+    OBJECT_DATA_SYNC_SOURCE: 'Синхронизация данных объектов',
+    CHANGE_HISTORY_ARCHIVE_SOURCE: 'Архивация истории изменений',
+    OBJECT_SHEET_CHANGE_SOURCE: 'Лист объектов',
     AUTOMATION_SOURCE: 'Автоматизация'
   },
 
@@ -1099,15 +1106,68 @@ function getActiveUserEmail_() {
 }
 
 
-/** Формирует уникальный ID операции. */
-function generateOperationId_() {
-  return SYSTEM_CONFIG.ID_PREFIXES.OPERATION + Utilities.getUuid();
+/**
+ * Резервирует следующий читаемый ID операции.
+ * Вызывать только внутри withDocumentLock_: истории и служебный максимум
+ * вместе не позволяют повторно использовать номер после удаления строк.
+ */
+function generateOperationId_(at) {
+  const date = at instanceof Date ? at : new Date();
+  const timezone = getSystemSpreadsheet_().getSpreadsheetTimeZone();
+  const day = Utilities.formatDate(date, timezone, 'yyyyMMdd');
+  const pattern = new RegExp('^OP-' + day + '-(\\d{4})$');
+  let maximum = 0;
+
+  ['OPERATION_HISTORY', 'CHANGE_HISTORY'].forEach(function (sheetKey) {
+    const context = getSystemSheetContext_(sheetKey);
+    const column = getSystemColumn_(sheetKey, H.OPERATION_ID);
+    const lastRow = context.sheet.getLastRow();
+    if (lastRow < context.config.dataStartRow) {
+      return;
+    }
+    const ids = context.sheet.getRange(
+      context.config.dataStartRow,
+      column,
+      lastRow - context.config.dataStartRow + 1,
+      1
+    ).getValues();
+    ids.forEach(function (row) {
+      const match = String(row[0] == null ? '' : row[0]).trim().match(pattern);
+      if (match) {
+        maximum = Math.max(maximum, Number(match[1]));
+      }
+    });
+  });
+
+  const properties = PropertiesService.getDocumentProperties();
+  const propertyKey = 'SYSTEM_OPERATION_SEQUENCE_' + day;
+  maximum = Math.max(maximum, Number(properties.getProperty(propertyKey)) || 0);
+  if (maximum >= 9999) {
+    throw new Error(
+      'Исчерпан предел 9999 операций за ' + day + '. Запись данных отменена.'
+    );
+  }
+  const next = maximum + 1;
+  properties.setProperty(propertyKey, String(next));
+  return SYSTEM_CONFIG.ID_PREFIXES.OPERATION + day + '-' +
+    String(next).padStart(4, '0');
 }
 
 
-/** Формирует уникальный ID изменения. */
-function generateChangeId_() {
-  return SYSTEM_CONFIG.ID_PREFIXES.CHANGE + Utilities.getUuid();
+/** Формирует читаемый ID изменения, связанный с операцией. */
+function generateChangeId_(operationId, sequence) {
+  const match = String(operationId || '').match(/^OP-(\d{8})-(\d{4})$/);
+  if (!match) {
+    throw new Error('Невозможно создать ID изменения: некорректный ID операции.');
+  }
+  if (!Number.isInteger(sequence) || sequence < 1 || sequence > 9999) {
+    throw new Error(
+      'Исчерпан предел 9999 изменений внутри операции ' + operationId +
+      '. Запись данных отменена.'
+    );
+  }
+  return SYSTEM_CONFIG.ID_PREFIXES.CHANGE + match[1] + '-' + match[2] + '-' +
+    String(sequence).padStart(4, '0');
 }
 
 
@@ -1391,4 +1451,90 @@ function showSystemValidationDialog_(result) {
     html,
     'Проверка структуры системы'
   );
+}
+
+/** Показывает критическую ошибку в заметном безопасном HTML-диалоге. */
+function showCriticalOperationError_(title, summary, reason) {
+  const safeTitle = sysEscapeHtml_(String(title || 'Ошибка'));
+  const safeSummary = sysEscapeHtml_(String(summary || ''));
+  const safeReason = sysEscapeHtml_(String(reason || 'Неизвестная ошибка'));
+  const html = HtmlService.createHtmlOutput(
+    '<!doctype html><html><head><base target="_top"><style>' +
+    'body{font:14px Arial,sans-serif;color:#202124;padding:20px}' +
+    'pre{white-space:pre-wrap;font:14px Arial,sans-serif;line-height:1.45}' +
+    '.critical{border-top:2px solid #8b0000;margin-top:18px;padding-top:16px}' +
+    '.critical h2{color:#8b0000;font-size:18px;margin:0 0 10px;font-weight:700}' +
+    '.reason{font-weight:700;white-space:pre-wrap}' +
+    'button{margin-top:22px;padding:8px 20px}</style></head><body>' +
+    '<pre>' + safeSummary + '</pre><div class="critical">' +
+    '<h2>КРИТИЧЕСКАЯ ОШИБКА</h2><div class="reason">' + safeReason + '</div>' +
+    '</div><button onclick="google.script.host.close()">Закрыть</button>' +
+    '</body></html>'
+  ).setWidth(720).setHeight(560);
+  SpreadsheetApp.getUi().showModalDialog(html, safeTitle);
+}
+
+/**
+ * Необязательная идемпотентная настройка двух системных ячеек справочника.
+ * Защита работает только в warning-only режиме и не ограничивает редакторов.
+ */
+function setupSystemDictionaryGuards() {
+  assertSystemSheetsStructure_(['CARD_DICTIONARY']);
+  const context = getSystemSheetContext_('CARD_DICTIONARY');
+  const guards = [
+    {
+      header: H.DOCUMENT_STATUS,
+      value: SYSTEM_CONFIG.VALUES.INITIAL_DOCUMENT_STATUS
+    },
+    {
+      header: H.RECORD_STATUS,
+      value: SYSTEM_CONFIG.VALUES.ACTIVE_RECORD_STATUS
+    }
+  ];
+  const lastRow = context.sheet.getLastRow();
+  const protectionDescription = 'Системное значение документооборота';
+  if (lastRow < context.config.dataStartRow) {
+    throw new Error('В справочнике отсутствуют обязательные системные значения.');
+  }
+  guards.forEach(function (guard) {
+    const column = getSystemColumn_('CARD_DICTIONARY', guard.header);
+    const range = context.sheet.getRange(
+      context.config.dataStartRow,
+      column,
+      lastRow - context.config.dataStartRow + 1,
+      1
+    );
+    const rows = range.getValues();
+    let found = false;
+    rows.forEach(function (row, offset) {
+      if (String(row[0] == null ? '' : row[0]).trim() !== guard.value) {
+        return;
+      }
+      found = true;
+      const cell = context.sheet.getRange(context.config.dataStartRow + offset, column);
+      cell.setNote(
+        'Системно обязательное значение. Не удаляйте и не переименовывайте его.'
+      ).setBackground('#fce8e6').setFontColor('#8b0000').setFontWeight('bold');
+      const ownProtections = cell
+        .getProtections(SpreadsheetApp.ProtectionType.RANGE)
+        .filter(function (protection) {
+          const protectedRange = protection.getRange();
+          return protection.getDescription() === protectionDescription &&
+            protectedRange.getRow() === cell.getRow() &&
+            protectedRange.getColumn() === cell.getColumn() &&
+            protectedRange.getNumRows() === 1 &&
+            protectedRange.getNumColumns() === 1;
+        });
+      const protection = ownProtections.length > 0
+        ? ownProtections[0]
+        : cell.protect().setDescription(protectionDescription);
+      protection.setWarningOnly(true);
+    });
+    if (!found) {
+      throw new Error(
+        'Не найдено системное значение «' + guard.value + '» в поле «' +
+        guard.header + '».'
+      );
+    }
+  });
 }
