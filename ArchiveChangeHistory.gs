@@ -20,24 +20,30 @@ function archiveChangeHistoryByDate() {
   const startedAt = new Date();
   const userEmail = getActiveUserEmail_();
   let operationId = '';
+  let archiveState = {
+    counters: emptyArchiveCounters_(),
+    warnings: []
+  };
 
   try {
     const result = withDocumentLock_(function () {
       operationId = generateOperationId_(startedAt);
-      return archiveChangeHistoryUnderLock_(operationId, startedAt, userEmail, cutoffText, cutoffDate);
+      return archiveChangeHistoryUnderLock_(operationId, startedAt, userEmail, cutoffText, cutoffDate, archiveState);
     });
     ui.alert('Архивация истории изменений', result.report.text, ui.ButtonSet.OK);
     return result.report;
   } catch (error) {
     const finishedAt = new Date();
-    const counters = error.archiveState && error.archiveState.counters
-      ? error.archiveState.counters
-      : emptyArchiveCounters_();
+    const effectiveState = error.archiveState && error.archiveState.counters
+      ? error.archiveState
+      : archiveState;
+    const counters = effectiveState.counters;
+    const warnings = effectiveState.warnings || [];
     const report = buildArchiveReport_(
       SYSTEM_CONFIG.VALUES.OPERATION_STATUS_ERROR,
       cutoffText,
       counters,
-      error.archiveState && error.archiveState.warnings ? error.archiveState.warnings : [],
+      warnings,
       String(error.message || error),
       startedAt,
       finishedAt
@@ -81,7 +87,7 @@ function setupChangeHistoryArchiveFolder() {
   ui.alert('Настройка архива истории изменений', 'Папка архива сохранена: ' + folder.getName(), ui.ButtonSet.OK);
 }
 
-function archiveChangeHistoryUnderLock_(operationId, startedAt, userEmail, cutoffText, cutoffDate) {
+function archiveChangeHistoryUnderLock_(operationId, startedAt, userEmail, cutoffText, cutoffDate, state) {
   assertSystemSheetsStructure_(['CHANGE_HISTORY', 'OPERATION_HISTORY']);
   const folderId = PropertiesService.getScriptProperties().getProperty(CHANGE_HISTORY_ARCHIVE_FOLDER_PROPERTY_);
   if (!folderId) throw new Error('Не настроена папка архива. Запустите setupChangeHistoryArchiveFolder.');
@@ -90,7 +96,6 @@ function archiveChangeHistoryUnderLock_(operationId, startedAt, userEmail, cutof
 
   const context = getSystemSheetContext_('CHANGE_HISTORY');
   const rows = readArchiveSourceRows_(context);
-  const state = { counters: emptyArchiveCounters_(), warnings: [] };
   state.counters.checkedRows = rows.length;
   assertArchiveSourceIds_(context, rows, state);
 

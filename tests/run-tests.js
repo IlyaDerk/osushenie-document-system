@@ -527,7 +527,62 @@ test('45. processArchiveMonth preserves existing archiveState object', () => {
   assert.throws(() => ctx.processArchiveMonth_({}, sourceContext, '2026-07', [{ values: sourceContext.sheet._rows[0] }], state), error => error.archiveState === state && error.message === 'already wrapped');
 });
 
-test('46. protected UI files and onOpen still remain unchanged', () => {
+function archiveEntryPointErrorFixture(errorFactory) {
+  let criticalSummary = '';
+  const ui = {
+    Button: { OK: 'OK' },
+    ButtonSet: { OK_CANCEL: 'OK_CANCEL', OK: 'OK' },
+    prompt() {
+      return { getSelectedButton: () => 'OK', getResponseText: () => '01.08.2026' };
+    },
+    alert() {}
+  };
+  const ctx = baseContext({ SpreadsheetApp: { getUi: () => ui, flush() {} } });
+  ctx.parseArchiveCutoffDate_ = () => new Date('2026-08-01T00:00:00Z');
+  ctx.getActiveUserEmail_ = () => 'tester@example.com';
+  ctx.generateOperationId_ = () => 'OP-20260804-0001';
+  ctx.withDocumentLock_ = callback => callback();
+  ctx.archiveChangeHistoryUnderLock_ = function (operationId, startedAt, userEmail, cutoffText, cutoffDate, state) {
+    state.counters.checkedRows = 48;
+    state.counters.selectedRows = 1;
+    state.counters.archiveFiles = 1;
+    throw errorFactory(ctx, state);
+  };
+  ctx.writeArchiveOperationHistory_ = () => {};
+  ctx.showCriticalOperationError_ = (title, summary) => { criticalSummary = summary; };
+  let caught;
+  try { ctx.archiveChangeHistoryByDate(); } catch (error) { caught = error; }
+  assert.ok(caught, 'expected archive entry point error');
+  return { caught, criticalSummary };
+}
+
+test('46. archive entry point report falls back to externally held state', () => {
+  const fixture = archiveEntryPointErrorFixture(() => new Error('Повреждён заголовок архива'));
+  assert.match(fixture.criticalSummary, /Строк истории проверено: 48/);
+  assert.match(fixture.criticalSummary, /Строк выбрано для архивации: 1/);
+  assert.match(fixture.criticalSummary, /Строк записано в архив: 0/);
+  assert.match(fixture.criticalSummary, /Строк удалено из рабочего файла: 0/);
+  assert.match(fixture.criticalSummary, /Архивных файлов: 1/);
+  assert.equal(fixture.caught.message, 'Повреждён заголовок архива');
+});
+
+test('47. archive entry point still prefers error archiveState', () => {
+  const fixture = archiveEntryPointErrorFixture((ctx) => {
+    const error = new Error('Ошибка с вложенным состоянием');
+    error.archiveState = {
+      counters: Object.assign(ctx.emptyArchiveCounters_(), { checkedRows: 7, selectedRows: 2, archiveFiles: 2 }),
+      warnings: ['Состояние из ошибки']
+    };
+    return error;
+  });
+  assert.match(fixture.criticalSummary, /Строк истории проверено: 7/);
+  assert.match(fixture.criticalSummary, /Строк выбрано для архивации: 2/);
+  assert.match(fixture.criticalSummary, /Архивных файлов: 2/);
+  assert.match(fixture.criticalSummary, /Состояние из ошибки/);
+  assert.equal(fixture.caught.message, 'Ошибка с вложенным состоянием');
+});
+
+test('48. protected UI files and onOpen still remain unchanged', () => {
   for (const f of ['Code.gs', 'OperatorSidebar.html']) cp.execFileSync('git', ['diff', '--quiet', '36eaaf7', '--', f]);
 });
 
@@ -560,4 +615,4 @@ function archiveMockSheet(context, initialRows) {
   };
 }
 
-if (!process.exitCode) console.log(`\n${passed}/46 tests passed.`);
+if (!process.exitCode) console.log(`\n${passed}/48 tests passed.`);
