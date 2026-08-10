@@ -135,6 +135,10 @@ function operatorCardValidateHeaders_(documentsHeaders, cardHeaders, documentsNa
     if (expected !== configured) throw new Error('Лист «' + documentsName + '», позиция ' + (index + 1) + ': ожидается заголовок «' + configured + '», фактически «' + expected + '».');
     if (actual !== expected) throw new Error('Лист «' + cardName + '», позиция ' + (index + 1) + ': ожидается заголовок «' + expected + '», фактически «' + actual + '».');
   }
+  for (let index = expectedCount; index < cardHeaders.length; index++) {
+    const actual = operatorCardNormalizeText_(cardHeaders[index]);
+    if (actual) throw new Error('Лист «' + cardName + '», позиция ' + (index + 1) + ': ожидается пустой заголовок после утверждённых 24 полей, фактически «' + actual + '».');
+  }
   return true;
 }
 
@@ -238,11 +242,16 @@ function operatorCardWriteOperation_(operation) {
 function operatorCardApply_(rawFilters) {
   const startedAt = new Date();
   return withDocumentLock_(function () {
-    let filters = operatorCardNormalizeFilters_(rawFilters);
+    let filters = {
+      object: { allObjects: true, objectId: '', objectName: SYSTEM_CONFIG.VALUES.ALL_OBJECTS_LABEL },
+      foremanId: '', foremanName: '', documentStatus: '', documentTypeId: '',
+      documentTypeName: '', holderId: '', holderName: '', dateFrom: '', dateTo: ''
+    };
     let operationId = '';
     let cardWritten = false;
     let result = { activeCount: 0, loadedCount: 0, duplicateIdsCount: 0, invalidDatesCount: 0, warnings: [] };
     try {
+      filters = operatorCardNormalizeFilters_(rawFilters);
       operationId = generateOperationId_(startedAt);
       const dictionaries = operatorCardGetFilterData_();
       operatorCardValidateSelection_(filters, dictionaries);
@@ -267,7 +276,10 @@ function operatorCardApply_(rawFilters) {
       try {
         operatorCardWriteOperation_({ id: operationId, startedAt: startedAt, finishedAt: finishedAt, email: getActiveUserEmail_(), status: status, loadedCount: result.loadedCount, duplicateIdsCount: result.duplicateIdsCount, errorsCount: 0, comment: operatorCardComment_(filters, result, '') });
       } catch (historyError) {
-        result.warnings.push('Карточка загружена, но запись в «История операций» завершилась ошибкой.');
+        const historyMessage = historyError && historyError.message ? historyError.message : String(historyError);
+        const warning = 'Карточка загружена, но запись в «История операций» завершилась ошибкой. Причина: ' + historyMessage;
+        result.warnings.push(warning);
+        if (typeof console !== 'undefined' && console.error) console.error(warning);
         return { success: true, status: SYSTEM_CONFIG.VALUES.OPERATION_STATUS_SUCCESS_WITH_WARNINGS, operationId: operationId, loadedCount: result.loadedCount, duplicateIdsCount: result.duplicateIdsCount, warnings: result.warnings, message: result.warnings[result.warnings.length - 1] };
       }
       return { success: true, status: status, operationId: operationId, loadedCount: result.loadedCount, duplicateIdsCount: result.duplicateIdsCount, warnings: result.warnings, message: result.loadedCount ? ('Загружено документов: ' + result.loadedCount + (result.warnings.length ? '. Найдены предупреждения.' : '.')) : 'Документы не найдены. Предыдущая выдача карточки очищена.' };

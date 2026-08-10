@@ -657,6 +657,8 @@ test('54. header contract accepts extra fact columns but rejects reordering', ()
   assert.equal(ctx.operatorCardValidateHeaders_(headers.concat(['extra']), headers, 'Документы объектов', 'Карточка'), true);
   const swapped = headers.slice(); [swapped[0], swapped[1]] = [swapped[1], swapped[0]];
   assert.throws(() => ctx.operatorCardValidateHeaders_(swapped, headers, 'Документы объектов', 'Карточка'), /позиция 1/);
+  assert.throws(() => ctx.operatorCardValidateHeaders_(headers.concat(['Техническое поле']), headers.concat(['Лишний заголовок']), 'Документы объектов', 'Карточка'), /позиция 25.*Лишний заголовок/);
+  assert.equal(ctx.operatorCardValidateHeaders_(headers.concat(['Техническое поле']), headers.concat(['', '  ']), 'Документы объектов', 'Карточка'), true);
 });
 test('55. active rows, combined ID filters and normalized status are applied', () => {
   const ctx = baseContext();
@@ -721,6 +723,107 @@ test('63. active date filter excludes blank and warns about invalid nonblank dat
   const range=ctx.operatorCardParseDateRange_('2026-08-10','2026-08-10','UTC');
   const result=ctx.operatorCardPrepareRows_(rows,i,ctx.operatorCardNormalizeFilters_({}),range,4);
   assert.equal(result.rows.length,1);assert.equal(result.invalidDatesCount,1);assert.match(result.warnings[0],/некорректной датой/);
+});
+
+
+const operatorWorkflowCardHeaders = ['ID документа','ID объекта','Тип документа','Номер договора','Дата документа','Статус документа','Оригинал / ЭДО','Комментарий','У кого документ','Где документ','Кто передал','Оплачен','Сумма документа','ГУ (Да/Нет)','Условия ГУ','Статус объекта','Дата начала работ','Дата окончания (по плану)','Дата окончания (по факту)','Дата создания','Дата обновления','ID типа документа','Кто обновил (email)','Ответственный прораб'];
+const operatorWorkflowDocumentHeaders = operatorWorkflowCardHeaders.concat(['ID сотрудника — у кого документ','ID сотрудника — кто передал','ID ответственного прораба','Дата изменения статуса документа','Отчётный период','Источник создания','Статус записи']);
+const operatorWorkflowOperationHeaders = ['ID операции','Дата и время начала','Дата и время завершения','Кто запустил (email)','Источник операции','Тип операции','Статус операции','Документов загружено в карточку','Документов с изменениями','Строк факта обновлено','Полей изменено','Дублирующихся ID найдено','Ошибок','Время выполнения, сек.','Текст ошибки / комментарий'];
+
+function operatorWorkflowFixture(options = {}) {
+  const ctx = baseContext();
+  const calls = { cardWrites: 0, operationRows: [], sheetKeys: [] };
+  const documentMap = Object.fromEntries(operatorWorkflowDocumentHeaders.map((header, index) => [header, index + 1]));
+  const documents = {
+    config: { name: 'Документы объектов', headerRow: 3, dataStartRow: 4 }, headers: operatorWorkflowDocumentHeaders.slice(), headerMap: documentMap,
+    sheet: { getLastRow: () => 3, getRange() { throw new Error('fact data range must not be read for empty fixture'); } }
+  };
+  const card = { config: { name: 'Карточка операциониста', headerRow: 5, dataStartRow: 6 }, headers: operatorWorkflowCardHeaders.slice(), sheet: {} };
+  const operation = {
+    config: { name: 'История операций', headerRow: 2, dataStartRow: 3 }, headers: operatorWorkflowOperationHeaders.slice(),
+    sheet: { getLastRow: () => 2, getRange() { return { setValues(rows) { calls.operationRows.push(rows[0].slice()); } }; } }
+  };
+  ctx.withDocumentLock_ = callback => callback();
+  ctx.generateOperationId_ = () => 'OP-20260810-0001';
+  ctx.getActiveUserEmail_ = () => 'tester@example.com';
+  ctx.getSystemSpreadsheet_ = () => ({ getSpreadsheetTimeZone: () => 'UTC' });
+  ctx.operatorCardGetFilterData_ = () => ({ objects: [{ id:'', name:'Все', isAllObjects:true }], foremen: [], employees: [], documentTypes: [] });
+  ctx.operatorCardValidateSelection_ = options.validationError ? () => { throw new Error(options.validationError); } : () => {};
+  ctx.operatorCardPrepareRows_ = () => ({ activeCount: options.activeCount == null ? 2 : options.activeCount, rows: [], cardRows: Array.from({length: options.loadedCount == null ? 2 : options.loadedCount}, (_, index) => [index + 1].concat(Array(23).fill(''))), warnings: (options.warnings || []).slice(), duplicateIdsCount: options.duplicateIdsCount || 0, invalidDatesCount: 0 });
+  ctx.operatorCardReplace_ = () => { calls.cardWrites++; };
+  ctx.getSystemSheetContext_ = key => {
+    calls.sheetKeys.push(key);
+    if (key === 'DOCUMENTS') return documents;
+    if (key === 'OPERATOR_CARD') return card;
+    if (key === 'OPERATION_HISTORY') {
+      if (options.historyError) throw new Error(options.historyError);
+      return operation;
+    }
+    throw new Error('Unexpected sheet key: ' + key);
+  };
+  return { ctx, calls };
+}
+
+function operatorWorkflowAssertCounters(row, expectedLoaded) {
+  assert.equal(row[7], expectedLoaded, 'real loaded count');
+  assert.equal(row[8], 0, 'documents changed');
+  assert.equal(row[9], 0, 'fact rows updated');
+  assert.equal(row[10], 0, 'fields changed');
+}
+
+test('64. full workflow success writes card and exactly one successful operation', () => {
+  const fixture = operatorWorkflowFixture({ loadedCount: 2 });
+  const response = fixture.ctx.operatorCardApply_({ object: {} });
+  assert.equal(response.status, 'Успешно'); assert.equal(response.loadedCount, 2);
+  assert.equal(fixture.calls.cardWrites, 1); assert.equal(fixture.calls.operationRows.length, 1);
+  assert.equal(fixture.calls.operationRows[0][6], 'Успешно');
+  operatorWorkflowAssertCounters(fixture.calls.operationRows[0], 2);
+  assert.match(fixture.calls.operationRows[0][14], /Объект: Все/);
+  assert.ok(!fixture.calls.sheetKeys.includes('CHANGE_HISTORY'));
+});
+
+test('65. full workflow duplicate warning writes exactly one warning operation', () => {
+  const warning = 'ID документа «D-1» повторяется в активных строках 4 и 5.';
+  const fixture = operatorWorkflowFixture({ loadedCount: 2, warnings: [warning], duplicateIdsCount: 1 });
+  const response = fixture.ctx.operatorCardApply_({});
+  assert.equal(response.status, 'Успешно с предупреждениями'); assert.equal(response.duplicateIdsCount, 1);
+  assert.equal(fixture.calls.operationRows.length, 1); assert.equal(fixture.calls.operationRows[0][6], 'Успешно с предупреждениями');
+  assert.equal(fixture.calls.operationRows[0][11], 1); assert.match(fixture.calls.operationRows[0][14], /D-1/);
+  operatorWorkflowAssertCounters(fixture.calls.operationRows[0], 2);
+});
+
+test('66. full workflow zero result writes one no-changes operation with real zero count', () => {
+  const fixture = operatorWorkflowFixture({ loadedCount: 0, activeCount: 3 });
+  const response = fixture.ctx.operatorCardApply_({});
+  assert.equal(response.status, 'Без изменений'); assert.equal(response.loadedCount, 0);
+  assert.equal(fixture.calls.cardWrites, 1); assert.equal(fixture.calls.operationRows.length, 1);
+  assert.equal(fixture.calls.operationRows[0][6], 'Без изменений'); operatorWorkflowAssertCounters(fixture.calls.operationRows[0], 0);
+});
+
+test('67. critical pre-write error preserves card and creates one best-effort error operation', () => {
+  const fixture = operatorWorkflowFixture({ validationError: 'Справочник повреждён' });
+  assert.throws(() => fixture.ctx.operatorCardApply_({}), /Справочник повреждён.*Карточка не была изменена/);
+  assert.equal(fixture.calls.cardWrites, 0); assert.equal(fixture.calls.operationRows.length, 1);
+  assert.equal(fixture.calls.operationRows[0][6], 'Ошибка'); assert.equal(fixture.calls.operationRows[0][12], 1);
+  operatorWorkflowAssertCounters(fixture.calls.operationRows[0], 0);
+});
+
+test('68. filter normalization error uses common error path and logs Все without changing card', () => {
+  const fixture = operatorWorkflowFixture();
+  assert.throws(() => fixture.ctx.operatorCardApply_({ object: { allObjects: false } }), /ID объекта.*Карточка не была изменена/);
+  assert.equal(fixture.calls.cardWrites, 0); assert.equal(fixture.calls.operationRows.length, 1);
+  assert.equal(fixture.calls.operationRows[0][6], 'Ошибка'); assert.match(fixture.calls.operationRows[0][14], /Объект: Все/);
+});
+
+test('69. history failure after successful card write keeps card and exposes original cause', () => {
+  const fixture = operatorWorkflowFixture({ loadedCount: 1, historyError: 'Лист журнала защищён' });
+  const originalError = console.error; const errors = []; console.error = message => errors.push(message);
+  let response;
+  try { response = fixture.ctx.operatorCardApply_({}); } finally { console.error = originalError; }
+  assert.equal(fixture.calls.cardWrites, 1); assert.equal(response.success, true); assert.equal(response.status, 'Успешно с предупреждениями');
+  assert.match(response.warnings.join(' '), /Карточка загружена.*Лист журнала защищён/);
+  assert.match(errors.join(' '), /Лист журнала защищён/);
+  assert.equal(fixture.calls.operationRows.length, 0);
 });
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);
