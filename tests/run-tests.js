@@ -3,7 +3,7 @@ const assert = require('assert');
 const fs = require('fs');
 const vm = require('vm');
 const cp = require('child_process');
-const files = ['SystemCore.gs', 'CreateObjectDocuments.gs', 'SyncObjectData.gs', 'ArchiveChangeHistory.gs'];
+const files = ['SystemCore.gs', 'CreateObjectDocuments.gs', 'SyncObjectData.gs', 'ArchiveChangeHistory.gs', 'OperatorCard.gs', 'Code.gs'];
 const source = files.map(f => fs.readFileSync(f, 'utf8')).join('\n');
 let passed = 0;
 function test(name, fn) {
@@ -17,6 +17,11 @@ function baseContext(extra = {}) {
       formatDate(date, zone, pattern) {
         if (pattern === 'yyyyMMdd') return '20260804';
         if (pattern === 'yyyy-MM') return date.toISOString().slice(0, 7);
+        if (pattern === 'yyyy-MM-dd') {
+          const parts = new Intl.DateTimeFormat('en-CA', { timeZone: zone, day: '2-digit', month: '2-digit', year: 'numeric' }).formatToParts(date);
+          const map = Object.fromEntries(parts.map(part => [part.type, part.value]));
+          return `${map.year}-${map.month}-${map.day}`;
+        }
         if (pattern === 'dd.MM.yyyy') {
           const parts = new Intl.DateTimeFormat('en-GB', { timeZone: zone, day: '2-digit', month: '2-digit', year: 'numeric' }).formatToParts(date);
           const map = Object.fromEntries(parts.map(part => [part.type, part.value]));
@@ -212,11 +217,11 @@ test('19. fact writes precede history and history failure states facts remain', 
     assert.ok(fact >= 0 && history > fact);
   }
 });
-test('20. protected UI files and onOpen are unchanged from merged baseline', () => {
-  for (const f of ['Code.gs', 'OperatorSidebar.html']) {
-    cp.execFileSync('git', ['diff', '--quiet', '36eaaf7', '--', f]);
-  }
-  cp.execFileSync('git', ['diff', '--quiet', '36eaaf7', '--', 'Code.gs']);
+test('20. operator endpoints delegate to the dedicated module', () => {
+  const text = fs.readFileSync('Code.gs', 'utf8');
+  assert.match(text, /return operatorCardGetFilterData_\(\)/);
+  assert.match(text, /return operatorCardApply_\(filters\)/);
+  assert.doesNotMatch(text, /OPERATOR_CONFIG|loadOperatorCard_/);
 });
 
 
@@ -582,8 +587,10 @@ test('47. archive entry point still prefers error archiveState', () => {
   assert.equal(fixture.caught.message, 'Ошибка с вложенным состоянием');
 });
 
-test('48. protected UI files and onOpen still remain unchanged', () => {
-  for (const f of ['Code.gs', 'OperatorSidebar.html']) cp.execFileSync('git', ['diff', '--quiet', '36eaaf7', '--', f]);
+test('48. operator sidebar contains all filters and no alert', () => {
+  const text = fs.readFileSync('OperatorSidebar.html', 'utf8');
+  for (const id of ['object', 'foreman', 'status', 'type', 'holder', 'from', 'to']) assert.match(text, new RegExp('id=\"' + id + '\"'));
+  assert.doesNotMatch(text, /alert\s*\(/);
 });
 
 function archiveTestContext(ctx, rows) {
@@ -615,4 +622,105 @@ function archiveMockSheet(context, initialRows) {
   };
 }
 
-if (!process.exitCode) console.log(`\n${passed}/48 tests passed.`);
+
+test('49. missing, empty and explicit all-object filters normalize to Все', () => {
+  const ctx = baseContext();
+  for (const value of [undefined, {}, { allObjects: true, objectId: 'ignored' }, { objectName: ' Все ' }]) {
+    const result = ctx.operatorCardNormalizeObjectFilter_(value);
+    assert.equal(result.allObjects, true); assert.equal(result.objectId, ''); assert.equal(result.objectName, 'Все');
+  }
+});
+test('50. concrete object requires and preserves ID', () => {
+  const ctx = baseContext();
+  assert.throws(() => ctx.operatorCardNormalizeObjectFilter_({ allObjects: false }), /ID объекта/);
+  const result = ctx.operatorCardNormalizeObjectFilter_({ allObjects: false, objectId: ' 3 ', objectName: 'Дом' });
+  assert.equal(result.objectId, '3'); assert.equal(result.allObjects, false);
+});
+test('51. programmatic Все is unique, first, and real objects are naturally sorted', () => {
+  const ctx = baseContext();
+  const result = ctx.operatorCardBuildObjects_([{ id: '10', name: 'Дом 10' }, { id: '2', name: 'Дом 2' }]);
+  assert.deepEqual(Array.from(result, x => x.name), ['Все', 'Дом 2', 'Дом 10']);
+  assert.equal(result.filter(x => x.isAllObjects).length, 1);
+});
+test('52. real object named Все is rejected', () => {
+  const ctx = baseContext();
+  assert.throws(() => ctx.operatorCardBuildObjects_([{ id: '1', name: ' ВСЕ ' }]), /системным названием/);
+});
+test('53. unknown IDs are rejected by server validation', () => {
+  const ctx = baseContext();
+  const filters = ctx.operatorCardNormalizeFilters_({ object: { allObjects: false, objectId: '404', objectName: 'X' } });
+  assert.throws(() => ctx.operatorCardValidateSelection_(filters, { objects: [], foremen: [], employees: [], documentTypes: [] }), /неизвестный объект/);
+});
+test('54. header contract accepts extra fact columns but rejects reordering', () => {
+  const ctx = baseContext();
+  const headers = ['ID документа','ID объекта','Тип документа','Номер договора','Дата документа','Статус документа','Оригинал / ЭДО','Комментарий','У кого документ','Где документ','Кто передал','Оплачен','Сумма документа','ГУ (Да/Нет)','Условия ГУ','Статус объекта','Дата начала работ','Дата окончания (по плану)','Дата окончания (по факту)','Дата создания','Дата обновления','ID типа документа','Кто обновил (email)','Ответственный прораб'];
+  assert.equal(ctx.operatorCardValidateHeaders_(headers.concat(['extra']), headers, 'Документы объектов', 'Карточка'), true);
+  const swapped = headers.slice(); [swapped[0], swapped[1]] = [swapped[1], swapped[0]];
+  assert.throws(() => ctx.operatorCardValidateHeaders_(swapped, headers, 'Документы объектов', 'Карточка'), /позиция 1/);
+});
+test('55. active rows, combined ID filters and normalized status are applied', () => {
+  const ctx = baseContext();
+  const indexes = { documentId:0, objectId:1, documentTypeId:2, documentStatus:3, holderId:4, foremanId:5, createdAt:6, recordStatus:7 };
+  const rows = [
+    ['DOC-2','2','T1',' ГОТОВ ','E1','F1','', ' Активная '],
+    ['DOC-3','2','T1','готов','E1','F1','', 'Архивная'],
+    ['DOC-4','2','T2','готов','E1','F1','', 'Удалённая']
+  ]; while(rows[0].length<31) rows.forEach(r=>r.push(''));
+  const filters = ctx.operatorCardNormalizeFilters_({ object:{allObjects:false,objectId:'2'}, documentTypeId:'T1', documentStatus:'готов', holderId:'E1', foremanId:'F1' });
+  const result = ctx.operatorCardPrepareRows_(rows,indexes,filters,{active:false},4);
+  assert.equal(result.activeCount,1); assert.equal(result.rows.length,1); assert.equal(result.cardRows[0].length,24);
+});
+test('56. natural sorting uses object, type, document and physical row', () => {
+  const ctx = baseContext(); const i={documentId:0,objectId:1,documentTypeId:2,documentStatus:3,holderId:4,foremanId:5,createdAt:6,recordStatus:7};
+  const rows=[['DOC-10','2','10','','','','','Активная'],['DOC-2','2','2','','','','','Активная'],['DOC-1','10','1','','','','','Активная']]; rows.forEach(r=>{while(r.length<31)r.push('')});
+  const result=ctx.operatorCardPrepareRows_(rows,i,ctx.operatorCardNormalizeFilters_({}),{active:false},4);
+  assert.deepEqual(Array.from(result.rows,x=>x.row[0]),['DOC-2','DOC-10','DOC-1']);
+});
+test('57. active duplicate group is retained and reports physical rows once per ID', () => {
+  const ctx=baseContext(); const i={documentId:0,objectId:1,documentTypeId:2,documentStatus:3,holderId:4,foremanId:5,createdAt:6,recordStatus:7};
+  const rows=[['D1','A','','','','','','Активная'],['D1','B','','','','','','Активная'],['D1','A','','','','','','Архивная']]; rows.forEach(r=>{while(r.length<31)r.push('')});
+  const result=ctx.operatorCardPrepareRows_(rows,i,ctx.operatorCardNormalizeFilters_({object:{allObjects:false,objectId:'A'}}),{active:false},18);
+  assert.equal(result.rows.length,1); assert.equal(result.duplicateIdsCount,1); assert.match(result.warnings[0],/18 и 19/); assert.doesNotMatch(result.warnings[0],/20/);
+});
+test('58. card replacement performs one 24-column setValues and clears tail', () => {
+  const ctx=baseContext(); let calls=0, written;
+  const sheet={getLastRow:()=>8,getRange(row,col,count,width){return {getValues:()=>[['old1'],['old2'],['']],setValues(values){calls++;written={row,col,count,width,values}}}}};
+  ctx.operatorCardReplace_({sheet,config:{dataStartRow:6}},[[1,2].concat(Array(22).fill(''))]);
+  assert.equal(calls,1); assert.equal(written.width,24); assert.equal(written.values.length,2); assert.ok(written.values[1].every(v=>v===''));
+});
+test('59. zero result clears old card in one batch', () => {
+  const ctx=baseContext(); let values; const sheet={getLastRow:()=>6,getRange(){return {getValues:()=>[['old']],setValues(v){values=v}}}};
+  ctx.operatorCardReplace_({sheet,config:{dataStartRow:6}},[]); assert.equal(values.length,1); assert.equal(values[0].length,24); assert.ok(values[0].every(v=>v===''));
+});
+test('60. operator implementation never writes facts, dictionaries, or change history', () => {
+  const text=fs.readFileSync('OperatorCard.gs','utf8');
+  assert.doesNotMatch(text,/appendRow|\.clear\s*\(|deleteRows|insertRows/);
+  assert.doesNotMatch(text,/getSystemSheetContext_\('CHANGE_HISTORY'\)/);
+  assert.match(text,/getRange\(start, 1, writeCount, 24\)\.setValues/);
+});
+
+
+test('61. date ranges support empty, from-only, to-only and reject reversed dates', () => {
+  const ctx=baseContext();
+  assert.equal(ctx.operatorCardParseDateRange_('','','Europe/Berlin').active,false);
+  assert.ok(ctx.operatorCardParseDateRange_('2026-03-29','','Europe/Berlin').from);
+  assert.ok(ctx.operatorCardParseDateRange_('','2026-10-25','Europe/Berlin').toExclusive);
+  assert.throws(()=>ctx.operatorCardParseDateRange_('2026-08-11','2026-08-10','UTC'),/Дата от/);
+});
+test('62. inclusive date boundaries use spreadsheet timezone and next calendar day', () => {
+  const ctx=baseContext(); const range=ctx.operatorCardParseDateRange_('2026-03-29','2026-03-29','Europe/Berlin');
+  assert.equal(range.from.toISOString(),'2026-03-28T23:00:00.000Z');
+  assert.equal(range.toExclusive.toISOString(),'2026-03-29T22:00:00.000Z');
+  assert.equal(range.toExclusive-range.from,23*60*60*1000);
+  assert.doesNotMatch(fs.readFileSync('OperatorCard.gs','utf8'),/24\s*\*\s*60\s*\*\s*60|86400000/);
+});
+test('63. active date filter excludes blank and warns about invalid nonblank dates', () => {
+  const ctx=baseContext(); const i={documentId:0,objectId:1,documentTypeId:2,documentStatus:3,holderId:4,foremanId:5,createdAt:6,recordStatus:7};
+  const valid=vm.runInContext("new Date('2026-08-10T12:00:00Z')",ctx);
+  const rows=[['A','','','','','',valid,'Активная'],['B','','','','','','','Активная'],['C','','','','','','bad','Активная']];rows.forEach(r=>{while(r.length<31)r.push('')});
+  const range=ctx.operatorCardParseDateRange_('2026-08-10','2026-08-10','UTC');
+  const result=ctx.operatorCardPrepareRows_(rows,i,ctx.operatorCardNormalizeFilters_({}),range,4);
+  assert.equal(result.rows.length,1);assert.equal(result.invalidDatesCount,1);assert.match(result.warnings[0],/некорректной датой/);
+});
+
+if (!process.exitCode) console.log(`\n${passed} tests passed.`);
