@@ -1015,8 +1015,6 @@ test('76. empty sidebar filter contract means all objects and no additional rest
   assert.equal(result.rows.length,2);
 });
 
-if (!process.exitCode) console.log(`\n${passed} tests passed.`);
-
 test('77. save card contract has unchanged first 24 fields plus status and physical row', () => {
   const ctx=baseContext(); const headers=Array.from(ctx.SYSTEM_CONFIG ? ctx.SYSTEM_CONFIG.SHEETS.OPERATOR_CARD.requiredHeaders : []);
   // top-level const is lexical in vm; inspect source for the runtime contract instead.
@@ -1043,7 +1041,7 @@ test('81. save module resolves holder from combined map and transfer only from e
   const text=fs.readFileSync('OperatorCardSave.gs','utf8');
   assert.match(text,/holderMap\[value\][\s\S]*HOLDER_EMPLOYEE_ID/);
   assert.match(text,/employeeMap\[value\][\s\S]*TRANSFERRED_BY_EMPLOYEE_ID/);
-  assert.match(text,/value=''[\s\S]*HOLDER_EMPLOYEE_ID\]=''/);
+  assert.match(text,/value = ''[\s\S]*HOLDER_EMPLOYEE_ID\] = ''/);
 });
 test('82. save validates optimistic version and all row identity keys before writes', () => {
   const text=fs.readFileSync('OperatorCardSave.gs','utf8');
@@ -1058,7 +1056,7 @@ test('84. fact writer whitelist excludes contract and includes derived technical
   const text=fs.readFileSync('OperatorCardSave.gs','utf8');
   const list=text.match(/const OPERATOR_CARD_SAVE_WRITABLE_ = \[([\s\S]*?)\];/)[1];
   assert.ok(!list.includes('CONTRACT_NUMBER')); assert.ok(list.includes('RECORD_STATUS'));
-  assert.match(text,/H\.UPDATED_AT,H\.UPDATED_BY_EMAIL,H\.DOCUMENT_STATUS_CHANGED_AT/);
+  assert.match(text,/H\.UPDATED_AT, H\.UPDATED_BY_EMAIL, H\.DOCUMENT_STATUS_CHANGED_AT/);
 });
 test('85. save histories use centralized operation source and edit action', () => {
   const core=fs.readFileSync('SystemCore.gs','utf8'),save=fs.readFileSync('OperatorCardSave.gs','utf8');
@@ -1070,3 +1068,139 @@ test('86. sidebar preserves lastAppliedFilters and reset remains local-only', ()
   assert.match(text,/let lastAppliedFilters=null/); assert.match(text,/lastAppliedFilters=filters/); assert.match(text,/saveOperatorCardChanges\(lastAppliedFilters\)/);
   const reset=text.match(/function resetFilters\(\)\{([\s\S]*?)\}\nel\('reset'\)/)[1]; assert.ok(!reset.includes('lastAppliedFilters'));
 });
+
+function partialSaveFixture(ctx, options = {}) {
+  const updated = options.updated || 'v1';
+  const documentId = options.documentId || 'DOC-1';
+  const factRow = options.factRow || 10;
+  const base = {
+    'ID документа':documentId,'ID объекта':'OBJ-1','ID типа документа':'TYPE-1',
+    'Тип документа':'Акт','Номер договора':'CN-1','Дата документа':'',
+    'Статус документа':'Новый','Оригинал / ЭДО':'Оригинал','Комментарий':'old',
+    'У кого документ':'','Где документ':'Офис','Кто передал':'','Оплачен':'Нет',
+    'Сумма документа':'','ГУ (Да/Нет)':'Нет','Условия ГУ':'','Статус объекта':'Работа',
+    'Дата начала работ':'','Дата окончания (по плану)':'','Дата окончания (по факту)':'',
+    'Дата создания':'created','Дата обновления':updated,'Кто обновил (email)':'old@example.com',
+    'Ответственный прораб':'Иванов','Статус записи':'Активная',
+    'ID сотрудника — у кого документ':'','ID сотрудника — кто передал':''
+  };
+  const fact = Object.assign({},base,options.fact||{});
+  const card = Object.assign({},base,options.card||{}, {'Номер строки в таблице фактов':factRow});
+  return {
+    card:{sheetRow:options.cardRow||6,values:card},
+    fact:{sheetRow:factRow,values:fact}
+  };
+}
+function partialDictionaries() {
+  return {
+    holders:[{id:'ST-1',name:'Иванов',type:'employee'},{id:'CL-1',name:'ООО Ромашка',type:'client'}],
+    employees:[{id:'ST-1',name:'Иванов'}],
+    card:{
+      'Статус документа':['Новый','Готов'], 'Оригинал / ЭДО':['Оригинал','ЭДО'],
+      'Где документ':['Офис','Архив'], 'Оплачен':['Нет','Да'], 'ГУ (Да/Нет)':['Нет','Да'],
+      'Статус записи':['Активная','Архивная','Удалённая']
+    }
+  };
+}
+
+test('87. one invalid row does not reject an unrelated valid row', () => {
+  const ctx=baseContext();
+  const valid=partialSaveFixture(ctx,{documentId:'DOC-1',factRow:10,card:{'Комментарий':'new'}});
+  const invalid=partialSaveFixture(ctx,{documentId:'DOC-2',factRow:99,card:{'Комментарий':'bad'}});
+  const plan=ctx.operatorCardBuildSavePlan_([valid.card,invalid.card],[valid.fact],partialDictionaries(),new Date(),'x@x','OP-20260804-0001');
+  assert.deepEqual(Array.from(plan.rows,p=>p.documentId),['DOC-1']); assert.equal(plan.rowErrors.length,1);
+});
+test('88. stale and invalid dictionary rows are local while valid changes survive', () => {
+  const ctx=baseContext();
+  const valid=partialSaveFixture(ctx,{documentId:'DOC-1',factRow:10,card:{'Комментарий':'new'}});
+  const stale=partialSaveFixture(ctx,{documentId:'DOC-2',factRow:11,updated:'old',fact:{'Дата обновления':'new'},card:{'Комментарий':'edit'}});
+  const dictionary=partialSaveFixture(ctx,{documentId:'DOC-3',factRow:12,card:{'Статус документа':'UNKNOWN'}});
+  const plan=ctx.operatorCardBuildSavePlan_([valid.card,stale.card,dictionary.card],[valid.fact,stale.fact,dictionary.fact],partialDictionaries(),new Date(),'x@x','OP-20260804-0001');
+  assert.equal(plan.rows.length,1); assert.equal(plan.rowErrors.length,2);
+  assert.match(plan.rowErrors.map(x=>x.message).join(' '),/изменились после загрузки/);
+});
+test('89. an untouched stale row produces no error', () => {
+  const ctx=baseContext(); const valid=partialSaveFixture(ctx,{documentId:'DOC-1',factRow:10,card:{'Комментарий':'new'}});
+  const stale=partialSaveFixture(ctx,{documentId:'DOC-2',factRow:11,updated:'old',fact:{'Дата обновления':'new'}});
+  const plan=ctx.operatorCardBuildSavePlan_([valid.card,stale.card],[valid.fact,stale.fact],partialDictionaries(),new Date(),'x@x','OP-20260804-0001');
+  assert.equal(plan.rows.length,1); assert.equal(plan.rowErrors.length,0);
+});
+test('90. partial and unresolved duplicate groups do not reject unrelated valid rows', () => {
+  const ctx=baseContext(); const valid=partialSaveFixture(ctx,{documentId:'DOC-1',factRow:10,card:{'Комментарий':'new'}});
+  const duplicate=partialSaveFixture(ctx,{documentId:'DUP',factRow:20,card:{'Статус записи':'Удалённая'}});
+  const otherFact=partialSaveFixture(ctx,{documentId:'DUP',factRow:21}).fact;
+  const plan=ctx.operatorCardBuildSavePlan_([valid.card,duplicate.card],[valid.fact,duplicate.fact,otherFact],partialDictionaries(),new Date(),'x@x','OP-20260804-0001');
+  assert.deepEqual(Array.from(plan.rows,p=>p.documentId),['DOC-1']); assert.equal(plan.groupErrors.length,1);
+});
+test('91. duplicate outside current card has no effect', () => {
+  const ctx=baseContext(); const valid=partialSaveFixture(ctx,{documentId:'DOC-1',factRow:10,card:{'Комментарий':'new'}});
+  const d1=partialSaveFixture(ctx,{documentId:'D100',factRow:20}).fact,d2=partialSaveFixture(ctx,{documentId:'D100',factRow:21}).fact;
+  const plan=ctx.operatorCardBuildSavePlan_([valid.card],[valid.fact,d1,d2],partialDictionaries(),new Date(),'x@x','OP-20260804-0001');
+  assert.equal(plan.rows.length,1); assert.equal(plan.groupErrors.length,0); assert.equal(plan.duplicateIds.length,0);
+});
+test('92. resolved duplicate group and unrelated valid row are both planned', () => {
+  const ctx=baseContext(); const valid=partialSaveFixture(ctx,{documentId:'DOC-1',factRow:10,card:{'Комментарий':'new'}});
+  const first=partialSaveFixture(ctx,{documentId:'DUP',factRow:20});
+  const second=partialSaveFixture(ctx,{documentId:'DUP',factRow:21,card:{'Статус записи':'Удалённая'}});
+  const plan=ctx.operatorCardBuildSavePlan_([valid.card,first.card,second.card],[valid.fact,first.fact,second.fact],partialDictionaries(),new Date(),'x@x','OP-20260804-0001');
+  assert.equal(plan.rows.length,2); assert.equal(plan.groupErrors.length,0); assert.equal(plan.duplicateIds.length,1);
+});
+test('93. rejected rows never create change-history plans', () => {
+  const ctx=baseContext(); const valid=partialSaveFixture(ctx,{documentId:'DOC-1',factRow:10,card:{'Комментарий':'new'}});
+  const stale=partialSaveFixture(ctx,{documentId:'DOC-2',factRow:11,updated:'old',fact:{'Дата обновления':'new'},card:{'Комментарий':'edit'}});
+  const plan=ctx.operatorCardBuildSavePlan_([valid.card,stale.card],[valid.fact,stale.fact],partialDictionaries(),new Date(),'x@x','OP-20260804-0001');
+  assert.ok(plan.changes.every(change=>change.documentId==='DOC-1'));
+});
+test('94. physical-row reader preserves offsets around blank rows', () => {
+  const ctx=baseContext(); const rows=[['D10'],[''],['D12']];
+  const context={headers:['ID документа'],config:{dataStartRow:10},sheet:{getLastRow:()=>12,getRange:()=>({getValues:()=>rows})}};
+  const read=ctx.operatorCardSaveRead_(context); assert.deepEqual(Array.from(read,x=>x.sheetRow),[10,12]);
+});
+test('95. fact writes batch adjacent physical rows by header', () => {
+  const ctx=baseContext(); const calls=[];
+  const sheet={getRange(row,col,count,width){return{setValues(values){calls.push({row,col,count,width,values})}}}};
+  ctx.operatorCardSaveWriteColumnGroups_(sheet,5,[{row:10,value:'a'},{row:11,value:'b'},{row:13,value:'c'}]);
+  assert.equal(calls.length,2); assert.equal(calls[0].count,2); assert.equal(calls[1].row,13);
+});
+test('96. operation ID reservation occurs inside the document lock', () => {
+  const text=fs.readFileSync('OperatorCardSave.gs','utf8');
+  assert.ok(text.indexOf('withDocumentLock_(function') < text.indexOf('generateOperationId_(started)'));
+});
+test('97. all destination structures are resolved before fact writes', () => {
+  const text=fs.readFileSync('OperatorCardSave.gs','utf8'); const write=text.indexOf('operatorCardSaveWriteFacts_(documents');
+  for(const key of ['DOCUMENTS','OPERATOR_CARD','CARD_DICTIONARY','EMPLOYEES','CLIENTS','CHANGE_HISTORY','OPERATION_HISTORY']) assert.ok(text.indexOf("getSystemSheetContext_('"+key+"')")<write);
+});
+test('98. partial success preserves rejected rows and skips full refresh', () => {
+  const save=fs.readFileSync('OperatorCardSave.gs','utf8'),side=fs.readFileSync('OperatorSidebar.html','utf8');
+  assert.match(save,/hasSaved && hasRejected[\s\S]*operatorCardSaveSyncSuccessfulCardRows_/);
+  assert.match(save,/needsFullRefresh: !hasRejected/); assert.match(save,/if \(result\.needsFullRefresh\)/);
+  assert.match(side,/saveProblems\(response\)/); assert.match(side,/изменения не сохранены/);
+});
+test('99. unresolved complete duplicate remains local and unrelated row survives', () => {
+  const ctx=baseContext(); const valid=partialSaveFixture(ctx,{documentId:'DOC-1',factRow:10,card:{'Комментарий':'new'}});
+  const first=partialSaveFixture(ctx,{documentId:'DUP',factRow:20,card:{'Статус записи':'Активная'}});
+  const second=partialSaveFixture(ctx,{documentId:'DUP',factRow:21,card:{'Статус записи':'Активная','Комментарий':'touch'}});
+  // Touching a duplicate business field rejects only the duplicate group.
+  const plan=ctx.operatorCardBuildSavePlan_([valid.card,first.card,second.card],[valid.fact,first.fact,second.fact],partialDictionaries(),new Date(),'x@x','OP-20260804-0001');
+  assert.deepEqual(Array.from(plan.rows,p=>p.documentId),['DOC-1']); assert.equal(plan.groupErrors.length,1);
+});
+test('100. partial-save status matrix follows the business contract', () => {
+  const ctx=baseContext();
+  assert.equal(ctx.operatorCardSaveStatus_(2,0,''),'Успешно');
+  assert.equal(ctx.operatorCardSaveStatus_(2,1,''),'Успешно с предупреждениями');
+  assert.equal(ctx.operatorCardSaveStatus_(0,0,''),'Без изменений');
+  assert.equal(ctx.operatorCardSaveStatus_(0,2,''),'Ошибка');
+});
+test('101. malformed change-history is global and facts remain untouched', () => {
+  const ctx=baseContext(); let factWrites=0,insideLock=false,idInsideLock=false;
+  const minimal={headers:['ID документа'],headerMap:{'ID документа':1},config:{name:'X',dataStartRow:2},sheet:{getLastRow:()=>1,getRange:()=>({getValues:()=>[],setValues(){}})}};
+  const documents={headers:['ID документа'],headerMap:{'ID документа':1},config:{name:'Документы',dataStartRow:2},sheet:{getLastRow:()=>1,getRange:()=>({getValues:()=>[],setValues(){factWrites++}})}};
+  ctx.withDocumentLock_=callback=>{insideLock=true;try{return callback()}finally{insideLock=false}};
+  ctx.generateOperationId_=()=>{idInsideLock=insideLock;return 'OP-20260804-0001'};
+  ctx.getActiveUserEmail_=()=> 'x@x';
+  ctx.getSystemSheetContext_=key=>{if(key==='CHANGE_HISTORY')throw new Error('malformed change history');return key==='DOCUMENTS'?documents:minimal};
+  assert.throws(()=>ctx.operatorCardSave_({}),/malformed change history/);
+  assert.equal(factWrites,0); assert.equal(idInsideLock,true);
+});
+
+if (!process.exitCode) console.log(`\n${passed} tests passed.`);

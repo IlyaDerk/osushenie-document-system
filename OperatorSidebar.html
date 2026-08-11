@@ -36,6 +36,11 @@ function busy(value,text){el('apply').disabled=value;el('reset').disabled=value;
 function selected(input,items,name){const text=el(input).value.trim();if(!text||text==='Все')return null;const item=items.find(candidate=>label(candidate)===text);if(!item)throw new Error('Выберите '+name+' из справочника.');return item}
 function selectedValue(input,values,name){const text=el(input).value.trim();if(!text||text==='Все')return '';const value=values.find(candidate=>candidate===text);if(!value)throw new Error('Выберите '+name+' из справочника.');return value}
 function clearMessages(){['result','warnings','error'].forEach(id=>show(id,''))}
+function saveProblems(response){
+  const rows=(response.rowErrors||[]).map(item=>(item.documentId||('Строка карточки '+item.cardRow))+(item.factRow?', строка факта '+item.factRow:'')+' — изменения не сохранены: '+item.message);
+  const groups=(response.groupErrors||[]).map(item=>item.documentId+' (строки факта '+(item.factRows||[]).join(', ')+') — изменения не сохранены: '+item.message);
+  return rows.concat(groups);
+}
 function resetFilters(){['object','foreman','status','type','holder','from','to'].forEach(id=>el(id).value='');clearMessages();show('state','')}
 el('reset').onclick=resetFilters;
 el('apply').onclick=function(){
@@ -53,7 +58,7 @@ el('apply').onclick=function(){
 
 el('save').onclick=function(){
   if(!lastAppliedFilters)return;clearMessages();busy(true,'Сохранение изменений...');
-  google.script.run.withSuccessHandler(response=>{busy(false,'');show('result',response.message,response.status==='Успешно'||response.status==='Без изменений'?'success':'warning');if(response.warnings&&response.warnings.length){el('warnings').className='message show warning';el('warnings').innerHTML='<strong>Предупреждения</strong><ul>'+response.warnings.map(w=>'<li>'+escapeHtml(w)+'</li>').join('')+'</ul>';}}).withFailureHandler(error=>{busy(false,'');show('error',error.message||String(error),'error')}).saveOperatorCardChanges(lastAppliedFilters);
+  google.script.run.withSuccessHandler(response=>{busy(false,'');show('result',response.message,response.status==='Успешно'||response.status==='Без изменений'?'success':response.status==='Ошибка'?'error':'warning');const problems=saveProblems(response).concat(response.warnings||[]);if(problems.length){el('warnings').className='message show warning';el('warnings').innerHTML='<strong>Предупреждения / ошибки по документам</strong><ul>'+problems.map(w=>'<li>'+escapeHtml(w)+'</li>').join('')+'</ul>';}}).withFailureHandler(error=>{busy(false,'');show('error',error.message||String(error),'error')}).saveOperatorCardChanges(lastAppliedFilters);
 };
 function escapeHtml(value){const div=document.createElement('div');div.textContent=value;return div.innerHTML}
 window.onload=function(){
