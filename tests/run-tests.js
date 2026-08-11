@@ -988,10 +988,29 @@ test('75. sidebar groups creation dates and reset is local-only for all filters'
   assert.match(text, /for="from">От<\/label><input id="from" type="date"/);
   assert.match(text, /for="to">До<\/label><input id="to" type="date"/);
   assert.match(text, />Очистить фильтры<\/button>/);
-  assert.match(text, /function resetFilters\(\)[\s\S]*\['object','foreman','status','type','holder'\][\s\S]*value='Все'[\s\S]*el\('from'\)\.value=''[\s\S]*el\('to'\)\.value=''/);
+  for (const id of ['object','foreman','status','type','holder']) {
+    assert.match(text, new RegExp('id="' + id + '"[^>]*placeholder="Все"'));
+  }
+  assert.match(text, /function resetFilters\(\)\{\['object','foreman','status','type','holder','from','to'\]\.forEach\(id=>el\(id\)\.value=''\)/);
   const resetBody = text.match(/function resetFilters\(\)\{([\s\S]*?)\}\nel\('reset'\)/)[1];
   assert.doesNotMatch(resetBody,/google\.script\.run|applyOperatorFilters/);
   assert.match(text,/fillValues\('statuses',data\.documentStatuses\|\|\[\]\)/);
+  assert.match(text,/items\.filter\(item=>!item\.isAllObjects\)/);
+  assert.match(text,/values\.filter\(value=>value!=='Все'\)/);
+  assert.doesNotMatch(text,/\.value='Все'/);
+});
+
+test('76. empty sidebar filter contract means all objects and no additional restrictions', () => {
+  const ctx = baseContext();
+  const filters = ctx.operatorCardNormalizeFilters_({object:{},foremanId:'',documentStatus:'',documentTypeId:'',holderId:'',dateFrom:'',dateTo:''});
+  assert.equal(filters.object.allObjects,true);
+  assert.equal(filters.foremanId,''); assert.equal(filters.documentStatus,'');
+  assert.equal(filters.documentTypeId,''); assert.equal(filters.holderId,'');
+  const indexes={documentId:0,objectId:1,documentTypeId:2,documentStatus:3,holderId:4,foremanId:5,createdAt:6,recordStatus:7};
+  const rows=[['D1','OBJ1','T1','Подписан','E1','F1','','Активная'],['D2','OBJ2','T2','Новый','E2','F2','','Активная']];
+  rows.forEach(row=>{while(row.length<31)row.push('')});
+  const result=ctx.operatorCardPrepareRows_(rows,indexes,filters,{active:false},4,0);
+  assert.equal(result.rows.length,2);
 });
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);

@@ -8,11 +8,11 @@
 </head>
 <body>
   <h2>Фильтры карточки</h2>
-  <div class="field"><label for="object">Объект</label><input id="object" list="objects" autocomplete="off"><datalist id="objects"></datalist></div>
-  <div class="field"><label for="foreman">Ответственный прораб</label><input id="foreman" list="foremen" autocomplete="off"><datalist id="foremen"></datalist></div>
-  <div class="field"><label for="status">Статус документа</label><input id="status" list="statuses" autocomplete="off"><datalist id="statuses"></datalist></div>
-  <div class="field"><label for="type">Тип документа</label><input id="type" list="types" autocomplete="off"><datalist id="types"></datalist></div>
-  <div class="field"><label for="holder">У кого документ</label><input id="holder" list="holders" autocomplete="off"><datalist id="holders"></datalist></div>
+  <div class="field"><label for="object">Объект</label><input id="object" list="objects" placeholder="Все" autocomplete="off"><datalist id="objects"></datalist></div>
+  <div class="field"><label for="foreman">Ответственный прораб</label><input id="foreman" list="foremen" placeholder="Все" autocomplete="off"><datalist id="foremen"></datalist></div>
+  <div class="field"><label for="status">Статус документа</label><input id="status" list="statuses" placeholder="Все" autocomplete="off"><datalist id="statuses"></datalist></div>
+  <div class="field"><label for="type">Тип документа</label><input id="type" list="types" placeholder="Все" autocomplete="off"><datalist id="types"></datalist></div>
+  <div class="field"><label for="holder">У кого документ</label><input id="holder" list="holders" placeholder="Все" autocomplete="off"><datalist id="holders"></datalist></div>
   <div class="date-group">
     <div class="group-label">Дата создания</div>
     <div class="dates">
@@ -27,14 +27,14 @@
 let data={objects:[],foremen:[],employees:[],documentTypes:[],documentStatuses:[]};
 const el=id=>document.getElementById(id);
 function label(item){return item.isAllObjects?'Все':item.name+' ['+item.id+']'}
-function fill(id,items){el(id).innerHTML='';items.forEach(item=>{const option=document.createElement('option');option.value=label(item);el(id).appendChild(option)})}
-function fillValues(id,values){el(id).innerHTML='';values.forEach(value=>{const option=document.createElement('option');option.value=value;el(id).appendChild(option)})}
+function fill(id,items){el(id).innerHTML='';items.filter(item=>!item.isAllObjects).forEach(item=>{const option=document.createElement('option');option.value=label(item);el(id).appendChild(option)})}
+function fillValues(id,values){el(id).innerHTML='';values.filter(value=>value!=='Все').forEach(value=>{const option=document.createElement('option');option.value=value;el(id).appendChild(option)})}
 function show(id,text,kind){const node=el(id);node.className='message'+(text?' show '+kind:'');node.textContent=text||''}
 function busy(value,text){el('apply').disabled=value;el('reset').disabled=value;show('state',text||'',value?'loading':'')}
 function selected(input,items,name){const text=el(input).value.trim();if(!text||text==='Все')return null;const item=items.find(candidate=>label(candidate)===text);if(!item)throw new Error('Выберите '+name+' из справочника.');return item}
 function selectedValue(input,values,name){const text=el(input).value.trim();if(!text||text==='Все')return '';const value=values.find(candidate=>candidate===text);if(!value)throw new Error('Выберите '+name+' из справочника.');return value}
 function clearMessages(){['result','warnings','error'].forEach(id=>show(id,''))}
-function resetFilters(){['object','foreman','status','type','holder'].forEach(id=>el(id).value='Все');el('from').value='';el('to').value='';clearMessages();show('state','')}
+function resetFilters(){['object','foreman','status','type','holder','from','to'].forEach(id=>el(id).value='');clearMessages();show('state','')}
 el('reset').onclick=resetFilters;
 el('apply').onclick=function(){
   clearMessages();let object,foreman,type,holder,status;
