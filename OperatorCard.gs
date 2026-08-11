@@ -76,6 +76,10 @@ function operatorCardGetFilterData_() {
     { key: 'id', header: H.EMPLOYEE_ID }, { key: 'name', header: H.EMPLOYEE_NAME },
     { key: 'position', header: H.EMPLOYEE_POSITION }
   ]).sort(function (a, b) { return operatorCardNaturalCompare_(a.name, b.name) || operatorCardNaturalCompare_(a.id, b.id); });
+  const clients = operatorCardReadDictionary_('CLIENTS', [
+    { key: 'id', header: H.CLIENT_ID }, { key: 'name', header: H.CLIENT_NAME }
+  ]).sort(function (a, b) { return operatorCardNaturalCompare_(a.name, b.name) || operatorCardNaturalCompare_(a.id, b.id); });
+  const holders = employees.map(function (x) { return { id: x.id, name: x.name, type: 'employee' }; }).concat(clients.map(function (x) { return { id: x.id, name: x.name, type: 'client' }; }));
   const documentTypes = operatorCardReadDictionary_('DOCUMENT_TYPES', [
     { key: 'id', header: H.DOCUMENT_TYPE_ID }, { key: 'name', header: H.DOCUMENT_TYPE }
   ]).sort(function (a, b) { return operatorCardNaturalCompare_(a.name, b.name) || operatorCardNaturalCompare_(a.id, b.id); });
@@ -88,6 +92,8 @@ function operatorCardGetFilterData_() {
       return operatorCardFold_(employee.position) === operatorCardFold_(SYSTEM_CONFIG.VALUES.FOREMAN_POSITION);
     }),
     employees: employees,
+    clients: clients,
+    holders: holders,
     documentTypes: documentTypes,
     documentStatuses: documentStatuses
   };
@@ -130,7 +136,7 @@ function operatorCardValidateSelection_(filters, data) {
   if (!filters.object.allObjects) requireId(filters.object.objectId, data.objects, 'объект');
   requireId(filters.foremanId, data.foremen, 'ответственный прораб');
   requireId(filters.documentTypeId, data.documentTypes, 'тип документа');
-  requireId(filters.holderId, data.employees, 'сотрудник — держатель документа');
+  requireId(filters.holderId, data.holders, 'держатель документа');
   if (filters.documentStatus && !data.documentStatuses.some(function (status) {
     return operatorCardFold_(status) === operatorCardFold_(filters.documentStatus);
   })) throw new Error('Выбран неизвестный статус документа «' + filters.documentStatus + '». Обновите справочники.');
@@ -151,17 +157,23 @@ function operatorCardMergeUniqueValues_(groups) {
   return result;
 }
 
-function operatorCardGetValidationData_() {
-  const employeeNames = operatorCardReadUniqueColumn_('EMPLOYEES', H.EMPLOYEE_NAME);
-  const clientNames = operatorCardReadUniqueColumn_('CLIENTS', H.CLIENT_NAME);
+function operatorCardDisplayLabel_(name, id) {
+  return id ? operatorCardNormalizeText_(name) + ' [' + operatorCardNormalizeText_(id) + ']' : operatorCardNormalizeText_(name);
+}
+
+function operatorCardGetValidationData_(filterData) {
+  const data = filterData || operatorCardGetFilterData_();
+  const employeeLabels = data.employees.map(function (x) { return operatorCardDisplayLabel_(x.name, x.id); });
+  const holderLabels = data.holders.map(function (x) { return operatorCardDisplayLabel_(x.name, x.id); });
   return [
     { header: H.DOCUMENT_STATUS, values: operatorCardReadUniqueColumn_('CARD_DICTIONARY', H.DOCUMENT_STATUS) },
     { header: H.ORIGINAL_EDO, values: operatorCardReadUniqueColumn_('CARD_DICTIONARY', H.ORIGINAL_EDO) },
-    { header: H.DOCUMENT_HOLDER, values: operatorCardMergeUniqueValues_([employeeNames, clientNames]) },
+    { header: H.DOCUMENT_HOLDER, values: holderLabels },
     { header: H.DOCUMENT_LOCATION, values: operatorCardReadUniqueColumn_('CARD_DICTIONARY', H.DOCUMENT_LOCATION) },
-    { header: H.TRANSFERRED_BY, values: employeeNames },
+    { header: H.TRANSFERRED_BY, values: employeeLabels },
     { header: H.PAID, values: operatorCardReadUniqueColumn_('CARD_DICTIONARY', H.PAID) },
-    { header: H.GU_FLAG, values: operatorCardReadUniqueColumn_('CARD_DICTIONARY', H.GU_FLAG) }
+    { header: H.GU_FLAG, values: operatorCardReadUniqueColumn_('CARD_DICTIONARY', H.GU_FLAG) },
+    { header: H.RECORD_STATUS, values: operatorCardReadUniqueColumn_('CARD_DICTIONARY', H.RECORD_STATUS) }
   ];
 }
 
@@ -225,20 +237,22 @@ function operatorCardValidateHeaders_(documentsHeaders, cardHeaders, documentsNa
   if (documentsStartIndex < 0) throw new Error('Лист «' + documentsName + '»: не найден заголовок «' + H.DOCUMENT_ID + '».');
   if (cardStartIndex < 0) throw new Error('Лист «' + cardName + '»: не найден заголовок «' + H.DOCUMENT_ID + '».');
   for (let index = 0; index < expectedCount; index++) {
-    const expected = operatorCardNormalizeText_(documentsHeaders[documentsStartIndex + index]);
-    const actual = operatorCardNormalizeText_(cardHeaders[cardStartIndex + index]);
     const configured = SYSTEM_CONFIG.SHEETS.OPERATOR_CARD.requiredHeaders[index];
-    if (expected !== configured) throw new Error('Лист «' + documentsName + '», позиция ' + (index + 1) + ' рабочего блока: ожидается заголовок «' + configured + '», фактически «' + expected + '».');
-    if (actual !== expected) throw new Error('Лист «' + cardName + '», позиция ' + (index + 1) + ' рабочего блока: ожидается заголовок «' + expected + '», фактически «' + actual + '».');
+    const actual = operatorCardNormalizeText_(cardHeaders[cardStartIndex + index]);
+    if (index < 24) {
+      const expected = operatorCardNormalizeText_(documentsHeaders[documentsStartIndex + index]);
+      if (expected !== configured) throw new Error('Лист «' + documentsName + '», позиция ' + (index + 1) + ' рабочего блока: ожидается заголовок «' + configured + '», фактически «' + expected + '».');
+    }
+    if (actual !== configured) throw new Error('Лист «' + cardName + '», позиция ' + (index + 1) + ' рабочего блока: ожидается заголовок «' + configured + '», фактически «' + actual + '».');
   }
   for (let index = cardStartIndex + expectedCount; index < cardHeaders.length; index++) {
     const actual = operatorCardNormalizeText_(cardHeaders[index]);
-    if (actual) throw new Error('Лист «' + cardName + '», физическая колонка ' + (index + 1) + ': ожидается пустой заголовок после утверждённых 24 полей, фактически «' + actual + '».');
+    if (actual) throw new Error('Лист «' + cardName + '», физическая колонка ' + (index + 1) + ': ожидается пустой заголовок после утверждённых 26 полей, фактически «' + actual + '».');
   }
   return true;
 }
 
-function operatorCardPrepareRows_(rows, indexes, filters, dateRange, dataStartRow, sourceStartIndex) {
+function operatorCardPrepareRows_(rows, indexes, filters, dateRange, dataStartRow, sourceStartIndex, dictionaries) {
   sourceStartIndex = sourceStartIndex == null ? 0 : sourceStartIndex;
   const warnings = [];
   const active = [];
@@ -285,7 +299,7 @@ function operatorCardPrepareRows_(rows, indexes, filters, dateRange, dataStartRo
     warnings.push('ID документа «' + id + '» повторяется в активных строках ' + duplicateGroups[id].join(' и ') + '.');
   });
   if (invalidDates) warnings.push('Строк с некорректной датой создания пропущено: ' + invalidDates + '.');
-  return { activeCount: active.length, rows: selected, cardRows: selected.map(function (item) { return item.row.slice(sourceStartIndex, sourceStartIndex + 24); }), warnings: warnings, duplicateIdsCount: Object.keys(selectedDuplicateIds).length, invalidDatesCount: invalidDates };
+  return { activeCount: active.length, rows: selected, cardRows: selected.map(function (item) { const cardRow = item.row.slice(sourceStartIndex, sourceStartIndex + 24); cardRow[8] = operatorCardDisplayLabel_(cardRow[8], item.row[indexes.holderId]); cardRow[10] = operatorCardDisplayLabel_(cardRow[10], item.row[indexes.transferredById]); return cardRow.concat([item.row[indexes.recordStatus], item.sheetRow]); }), warnings: warnings, duplicateIdsCount: Object.keys(selectedDuplicateIds).length, invalidDatesCount: invalidDates };
 }
 
 function operatorCardReplace_(cardContext, newRows) {
@@ -301,9 +315,11 @@ function operatorCardReplace_(cardContext, newRows) {
   const writeCount = Math.max(oldCount, newRows.length);
   if (!writeCount) return;
   const output = Array.from({ length: writeCount }, function (_, index) {
-    return index < newRows.length ? newRows[index].slice() : Array(24).fill('');
+    return index < newRows.length ? newRows[index].slice() : Array(26).fill('');
   });
-  sheet.getRange(start, cardStartColumn, writeCount, 24).setValues(output);
+  sheet.getRange(start, cardStartColumn, writeCount, 26).setValues(output);
+  const technicalColumn = cardStartColumn + 25;
+  if (sheet.hideColumns) sheet.hideColumns(technicalColumn);
 }
 
 function operatorCardComment_(filters, result, criticalError) {
@@ -337,7 +353,7 @@ function operatorCardWriteOperation_(operation) {
   context.sheet.getRange(start, 1, 1, context.headers.length).setValues([row]);
 }
 
-function operatorCardApply_(rawFilters) {
+function operatorCardApply_(rawFilters, suppressJournal) {
   const startedAt = new Date();
   return withDocumentLock_(function () {
     let filters = {
@@ -350,7 +366,7 @@ function operatorCardApply_(rawFilters) {
     let result = { activeCount: 0, loadedCount: 0, duplicateIdsCount: 0, invalidDatesCount: 0, warnings: [] };
     try {
       filters = operatorCardNormalizeFilters_(rawFilters);
-      operationId = generateOperationId_(startedAt);
+      if (!suppressJournal) operationId = generateOperationId_(startedAt);
       const dictionaries = operatorCardGetFilterData_();
       operatorCardValidateSelection_(filters, dictionaries);
       const ss = getSystemSpreadsheet_();
@@ -366,16 +382,16 @@ function operatorCardApply_(rawFilters) {
       result = operatorCardPrepareRows_(rows, {
         documentId: index(H.DOCUMENT_ID), objectId: index(H.OBJECT_ID), documentTypeId: index(H.DOCUMENT_TYPE_ID),
         documentStatus: index(H.DOCUMENT_STATUS), holderId: index(H.HOLDER_EMPLOYEE_ID), foremanId: index(H.RESPONSIBLE_FOREMAN_ID),
-        createdAt: index(H.CREATED_AT), recordStatus: index(H.RECORD_STATUS)
-      }, filters, range, documents.config.dataStartRow, documentsStartColumn - 1);
+        createdAt: index(H.CREATED_AT), recordStatus: index(H.RECORD_STATUS), transferredById: index(H.TRANSFERRED_BY_EMPLOYEE_ID)
+      }, filters, range, documents.config.dataStartRow, documentsStartColumn - 1, dictionaries);
       result.loadedCount = result.cardRows.length;
-      operatorCardApplyValidations_(card, operatorCardGetValidationData_());
+      operatorCardApplyValidations_(card, operatorCardGetValidationData_(dictionaries));
       operatorCardReplace_(card, result.cardRows);
       cardWritten = true;
       const status = result.loadedCount === 0 ? SYSTEM_CONFIG.VALUES.OPERATION_STATUS_NO_CHANGES : (result.warnings.length ? SYSTEM_CONFIG.VALUES.OPERATION_STATUS_SUCCESS_WITH_WARNINGS : SYSTEM_CONFIG.VALUES.OPERATION_STATUS_SUCCESS);
       const finishedAt = new Date();
       try {
-        operatorCardWriteOperation_({ id: operationId, startedAt: startedAt, finishedAt: finishedAt, email: getActiveUserEmail_(), status: status, loadedCount: result.loadedCount, duplicateIdsCount: result.duplicateIdsCount, errorsCount: 0, comment: operatorCardComment_(filters, result, '') });
+        if (!suppressJournal) operatorCardWriteOperation_({ id: operationId, startedAt: startedAt, finishedAt: finishedAt, email: getActiveUserEmail_(), status: status, loadedCount: result.loadedCount, duplicateIdsCount: result.duplicateIdsCount, errorsCount: 0, comment: operatorCardComment_(filters, result, '') });
       } catch (historyError) {
         const historyMessage = historyError && historyError.message ? historyError.message : String(historyError);
         const warning = 'Карточка загружена, но запись в «История операций» завершилась ошибкой. Причина: ' + historyMessage;
@@ -386,9 +402,9 @@ function operatorCardApply_(rawFilters) {
       return { success: true, status: status, operationId: operationId, loadedCount: result.loadedCount, duplicateIdsCount: result.duplicateIdsCount, warnings: result.warnings, message: result.loadedCount ? ('Загружено документов: ' + result.loadedCount + (result.warnings.length ? '. Найдены предупреждения.' : '.')) : 'Документы не найдены. Предыдущая выдача карточки очищена.' };
     } catch (error) {
       const message = error && error.message ? error.message : String(error);
-      if (!operationId) { try { operationId = generateOperationId_(startedAt); } catch (ignored) {} }
+      if (!operationId && !suppressJournal) { try { operationId = generateOperationId_(startedAt); } catch (ignored) {} }
       try {
-        operatorCardWriteOperation_({ id: operationId, startedAt: startedAt, finishedAt: new Date(), email: getActiveUserEmail_(), status: SYSTEM_CONFIG.VALUES.OPERATION_STATUS_ERROR, loadedCount: cardWritten ? result.loadedCount : 0, duplicateIdsCount: result.duplicateIdsCount || 0, errorsCount: 1, comment: operatorCardComment_(filters, result, message) });
+        if (!suppressJournal) operatorCardWriteOperation_({ id: operationId, startedAt: startedAt, finishedAt: new Date(), email: getActiveUserEmail_(), status: SYSTEM_CONFIG.VALUES.OPERATION_STATUS_ERROR, loadedCount: cardWritten ? result.loadedCount : 0, duplicateIdsCount: result.duplicateIdsCount || 0, errorsCount: 1, comment: operatorCardComment_(filters, result, message) });
       } catch (ignoredHistoryError) {}
       throw new Error(message + (cardWritten ? '' : ' Карточка не была изменена. На листе осталась предыдущая выдача.'));
     }

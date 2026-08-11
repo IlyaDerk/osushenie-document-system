@@ -170,12 +170,14 @@ const SYSTEM_CONFIG = {
     OBJECT_DATA_SYNC_OPERATION_TYPE: 'Синхронизация данных объектов',
     CHANGE_HISTORY_ARCHIVE_OPERATION_TYPE: 'Архивация истории изменений',
     OPERATOR_CARD_LOAD_OPERATION_TYPE: 'Загрузка карточки операциониста',
+    OPERATOR_CARD_SAVE_OPERATION_TYPE: 'Сохранение изменений карточки операциониста',
 
     ALL_OBJECTS_LABEL: 'Все',
     FOREMAN_POSITION: 'Экспедитор',
 
     CHANGE_ACTION_CREATE: 'Создание',
     CHANGE_ACTION_SYNC: 'Синхронизация',
+    CHANGE_ACTION_EDIT: 'Изменение',
 
     OPERATOR_CARD_SOURCE: 'Карточка операциониста',
     OBJECT_CREATION_SOURCE: 'Создание документов по объекту',
@@ -271,7 +273,9 @@ const SYSTEM_CONFIG = {
         H.UPDATED_AT,
         H.DOCUMENT_TYPE_ID,
         H.UPDATED_BY_EMAIL,
-        H.RESPONSIBLE_FOREMAN
+        H.RESPONSIBLE_FOREMAN,
+        H.RECORD_STATUS,
+        H.FACT_ROW_NUMBER
       ]
     },
 
@@ -421,7 +425,7 @@ const SYSTEM_CONFIG = {
     {
       cardHeader: H.CONTRACT_NUMBER,
       factHeader: H.CONTRACT_NUMBER,
-      editable: true
+      editable: false
     },
     {
       cardHeader: H.DOCUMENT_DATE,
@@ -528,7 +532,9 @@ const SYSTEM_CONFIG = {
       cardHeader: H.RESPONSIBLE_FOREMAN,
       factHeader: H.RESPONSIBLE_FOREMAN,
       editable: false
-    }
+    },
+    { cardHeader: H.RECORD_STATUS, factHeader: H.RECORD_STATUS, editable: true },
+    { cardHeader: H.FACT_ROW_NUMBER, factHeader: null, editable: false, technical: true }
   ]
 };
 

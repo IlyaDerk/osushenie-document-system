@@ -21,3 +21,7 @@ function getOperatorFilterData() {
 function applyOperatorFilters(filters) {
   return operatorCardApply_(filters);
 }
+
+function saveOperatorCardChanges(filters) {
+  return operatorCardSave_(filters);
+}
