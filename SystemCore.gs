@@ -139,7 +139,7 @@ const H = SYSTEM_HEADERS;
  * ============================================================
  */
 const SYSTEM_CONFIG = {
-  VERSION: '0.4.0',
+  VERSION: '0.5.0',
 
   /**
    * Максимальное время ожидания блокировки.
@@ -169,6 +169,10 @@ const SYSTEM_CONFIG = {
 
     OBJECT_DATA_SYNC_OPERATION_TYPE: 'Синхронизация данных объектов',
     CHANGE_HISTORY_ARCHIVE_OPERATION_TYPE: 'Архивация истории изменений',
+    OPERATOR_CARD_LOAD_OPERATION_TYPE: 'Загрузка карточки операциониста',
+
+    ALL_OBJECTS_LABEL: 'Все',
+    FOREMAN_POSITION: 'Экспедитор',
 
     CHANGE_ACTION_CREATE: 'Создание',
     CHANGE_ACTION_SYNC: 'Синхронизация',
@@ -395,8 +399,8 @@ const SYSTEM_CONFIG = {
    * editable: true — оператор может изменить поле.
    * editable: false — поле предназначено только для просмотра.
    *
-   * sourceSheetKey: OBJECTS означает, что актуальное значение
-   * при загрузке карточки нужно брать из листа «Объекты».
+   * Карта описывает контракт полей для будущего редактирования. Чтение
+   * карточки берёт первые 24 поля непосредственно из «Документы объектов».
    */
   CARD_FIELD_MAP: [
     {
@@ -475,33 +479,25 @@ const SYSTEM_CONFIG = {
       editable: true
     },
 
-    // Актуальные данные объекта подставляются из «Объекты»
+    // Синхронизированные данные объекта читаются из строки документа.
     {
       cardHeader: H.OBJECT_STATUS,
       factHeader: H.OBJECT_STATUS,
-      sourceSheetKey: 'OBJECTS',
-      sourceHeader: H.OBJECT_STATUS,
       editable: false
     },
     {
       cardHeader: H.WORK_START_DATE,
       factHeader: H.WORK_START_DATE,
-      sourceSheetKey: 'OBJECTS',
-      sourceHeader: H.WORK_START_DATE,
       editable: false
     },
     {
       cardHeader: H.WORK_END_PLAN,
       factHeader: H.WORK_END_PLAN,
-      sourceSheetKey: 'OBJECTS',
-      sourceHeader: H.WORK_END_PLAN,
       editable: false
     },
     {
       cardHeader: H.WORK_END_FACT,
       factHeader: H.WORK_END_FACT,
-      sourceSheetKey: 'OBJECTS',
-      sourceHeader: H.WORK_END_FACT,
       editable: false
     },
 
@@ -527,12 +523,10 @@ const SYSTEM_CONFIG = {
       editable: false
     },
 
-    // Ответственный также загружается из «Объекты»
+    // Ответственный уже синхронизирован в строку документа.
     {
       cardHeader: H.RESPONSIBLE_FOREMAN,
       factHeader: H.RESPONSIBLE_FOREMAN,
-      sourceSheetKey: 'OBJECTS',
-      sourceHeader: H.RESPONSIBLE_FOREMAN,
       editable: false
     }
   ]
