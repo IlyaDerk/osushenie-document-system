@@ -126,23 +126,32 @@ function operatorCardNaturalCompare_(left, right) {
   return String(left == null ? '' : left).localeCompare(String(right == null ? '' : right), 'ru', { numeric: true, sensitivity: 'base' });
 }
 
-function operatorCardValidateHeaders_(documentsHeaders, cardHeaders, documentsName, cardName) {
+function operatorCardValidateHeaders_(documentsHeaders, cardHeaders, documentsName, cardName, documentsStartColumn, cardStartColumn) {
   const expectedCount = SYSTEM_CONFIG.SHEETS.OPERATOR_CARD.requiredHeaders.length;
+  const documentsStartIndex = documentsStartColumn == null
+    ? documentsHeaders.map(operatorCardNormalizeText_).indexOf(H.DOCUMENT_ID)
+    : documentsStartColumn - 1;
+  const cardStartIndex = cardStartColumn == null
+    ? cardHeaders.map(operatorCardNormalizeText_).indexOf(H.DOCUMENT_ID)
+    : cardStartColumn - 1;
+  if (documentsStartIndex < 0) throw new Error('Лист «' + documentsName + '»: не найден заголовок «' + H.DOCUMENT_ID + '».');
+  if (cardStartIndex < 0) throw new Error('Лист «' + cardName + '»: не найден заголовок «' + H.DOCUMENT_ID + '».');
   for (let index = 0; index < expectedCount; index++) {
-    const expected = operatorCardNormalizeText_(documentsHeaders[index]);
-    const actual = operatorCardNormalizeText_(cardHeaders[index]);
+    const expected = operatorCardNormalizeText_(documentsHeaders[documentsStartIndex + index]);
+    const actual = operatorCardNormalizeText_(cardHeaders[cardStartIndex + index]);
     const configured = SYSTEM_CONFIG.SHEETS.OPERATOR_CARD.requiredHeaders[index];
-    if (expected !== configured) throw new Error('Лист «' + documentsName + '», позиция ' + (index + 1) + ': ожидается заголовок «' + configured + '», фактически «' + expected + '».');
-    if (actual !== expected) throw new Error('Лист «' + cardName + '», позиция ' + (index + 1) + ': ожидается заголовок «' + expected + '», фактически «' + actual + '».');
+    if (expected !== configured) throw new Error('Лист «' + documentsName + '», позиция ' + (index + 1) + ' рабочего блока: ожидается заголовок «' + configured + '», фактически «' + expected + '».');
+    if (actual !== expected) throw new Error('Лист «' + cardName + '», позиция ' + (index + 1) + ' рабочего блока: ожидается заголовок «' + expected + '», фактически «' + actual + '».');
   }
-  for (let index = expectedCount; index < cardHeaders.length; index++) {
+  for (let index = cardStartIndex + expectedCount; index < cardHeaders.length; index++) {
     const actual = operatorCardNormalizeText_(cardHeaders[index]);
-    if (actual) throw new Error('Лист «' + cardName + '», позиция ' + (index + 1) + ': ожидается пустой заголовок после утверждённых 24 полей, фактически «' + actual + '».');
+    if (actual) throw new Error('Лист «' + cardName + '», физическая колонка ' + (index + 1) + ': ожидается пустой заголовок после утверждённых 24 полей, фактически «' + actual + '».');
   }
   return true;
 }
 
-function operatorCardPrepareRows_(rows, indexes, filters, dateRange, dataStartRow) {
+function operatorCardPrepareRows_(rows, indexes, filters, dateRange, dataStartRow, sourceStartIndex) {
+  sourceStartIndex = sourceStartIndex == null ? 0 : sourceStartIndex;
   const warnings = [];
   const active = [];
   rows.forEach(function (row, offset) {
@@ -188,16 +197,17 @@ function operatorCardPrepareRows_(rows, indexes, filters, dateRange, dataStartRo
     warnings.push('ID документа «' + id + '» повторяется в активных строках ' + duplicateGroups[id].join(' и ') + '.');
   });
   if (invalidDates) warnings.push('Строк с некорректной датой создания пропущено: ' + invalidDates + '.');
-  return { activeCount: active.length, rows: selected, cardRows: selected.map(function (item) { return item.row.slice(0, 24); }), warnings: warnings, duplicateIdsCount: Object.keys(selectedDuplicateIds).length, invalidDatesCount: invalidDates };
+  return { activeCount: active.length, rows: selected, cardRows: selected.map(function (item) { return item.row.slice(sourceStartIndex, sourceStartIndex + 24); }), warnings: warnings, duplicateIdsCount: Object.keys(selectedDuplicateIds).length, invalidDatesCount: invalidDates };
 }
 
 function operatorCardReplace_(cardContext, newRows) {
   const sheet = cardContext.sheet;
   const start = cardContext.config.dataStartRow;
+  const cardStartColumn = cardContext.headerMap[sysNormalizeHeader_(H.DOCUMENT_ID)];
   const available = Math.max(sheet.getLastRow() - start + 1, 0);
   let oldCount = 0;
   if (available) {
-    const ids = sheet.getRange(start, 1, available, 1).getValues();
+    const ids = sheet.getRange(start, cardStartColumn, available, 1).getValues();
     ids.forEach(function (row, index) { if (operatorCardNormalizeText_(row[0])) oldCount = index + 1; });
   }
   const writeCount = Math.max(oldCount, newRows.length);
@@ -205,7 +215,7 @@ function operatorCardReplace_(cardContext, newRows) {
   const output = Array.from({ length: writeCount }, function (_, index) {
     return index < newRows.length ? newRows[index].slice() : Array(24).fill('');
   });
-  sheet.getRange(start, 1, writeCount, 24).setValues(output);
+  sheet.getRange(start, cardStartColumn, writeCount, 24).setValues(output);
 }
 
 function operatorCardComment_(filters, result, criticalError) {
@@ -259,7 +269,9 @@ function operatorCardApply_(rawFilters) {
       const range = operatorCardParseDateRange_(filters.dateFrom, filters.dateTo, ss.getSpreadsheetTimeZone());
       const documents = getSystemSheetContext_('DOCUMENTS');
       const card = getSystemSheetContext_('OPERATOR_CARD');
-      operatorCardValidateHeaders_(documents.headers, card.headers, documents.config.name, card.config.name);
+      const documentsStartColumn = documents.headerMap[sysNormalizeHeader_(H.DOCUMENT_ID)];
+      const cardStartColumn = card.headerMap[sysNormalizeHeader_(H.DOCUMENT_ID)];
+      operatorCardValidateHeaders_(documents.headers, card.headers, documents.config.name, card.config.name, documentsStartColumn, cardStartColumn);
       const lastRow = documents.sheet.getLastRow();
       const rows = lastRow < documents.config.dataStartRow ? [] : documents.sheet.getRange(documents.config.dataStartRow, 1, lastRow - documents.config.dataStartRow + 1, documents.headers.length).getValues();
       function index(header) { return documents.headerMap[sysNormalizeHeader_(header)] - 1; }
@@ -267,7 +279,7 @@ function operatorCardApply_(rawFilters) {
         documentId: index(H.DOCUMENT_ID), objectId: index(H.OBJECT_ID), documentTypeId: index(H.DOCUMENT_TYPE_ID),
         documentStatus: index(H.DOCUMENT_STATUS), holderId: index(H.HOLDER_EMPLOYEE_ID), foremanId: index(H.RESPONSIBLE_FOREMAN_ID),
         createdAt: index(H.CREATED_AT), recordStatus: index(H.RECORD_STATUS)
-      }, filters, range, documents.config.dataStartRow);
+      }, filters, range, documents.config.dataStartRow, documentsStartColumn - 1);
       result.loadedCount = result.cardRows.length;
       operatorCardReplace_(card, result.cardRows);
       cardWritten = true;

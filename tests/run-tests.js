@@ -656,8 +656,8 @@ test('54. header contract accepts extra fact columns but rejects reordering', ()
   const headers = ['ID документа','ID объекта','Тип документа','Номер договора','Дата документа','Статус документа','Оригинал / ЭДО','Комментарий','У кого документ','Где документ','Кто передал','Оплачен','Сумма документа','ГУ (Да/Нет)','Условия ГУ','Статус объекта','Дата начала работ','Дата окончания (по плану)','Дата окончания (по факту)','Дата создания','Дата обновления','ID типа документа','Кто обновил (email)','Ответственный прораб'];
   assert.equal(ctx.operatorCardValidateHeaders_(headers.concat(['extra']), headers, 'Документы объектов', 'Карточка'), true);
   const swapped = headers.slice(); [swapped[0], swapped[1]] = [swapped[1], swapped[0]];
-  assert.throws(() => ctx.operatorCardValidateHeaders_(swapped, headers, 'Документы объектов', 'Карточка'), /позиция 1/);
-  assert.throws(() => ctx.operatorCardValidateHeaders_(headers.concat(['Техническое поле']), headers.concat(['Лишний заголовок']), 'Документы объектов', 'Карточка'), /позиция 25.*Лишний заголовок/);
+  assert.throws(() => ctx.operatorCardValidateHeaders_(swapped, headers, 'Документы объектов', 'Карточка'), /позиция 2/);
+  assert.throws(() => ctx.operatorCardValidateHeaders_(headers.concat(['Техническое поле']), headers.concat(['Лишний заголовок']), 'Документы объектов', 'Карточка'), /колонка 25.*Лишний заголовок/);
   assert.equal(ctx.operatorCardValidateHeaders_(headers.concat(['Техническое поле']), headers.concat(['', '  ']), 'Документы объектов', 'Карточка'), true);
 });
 test('55. active rows, combined ID filters and normalized status are applied', () => {
@@ -687,18 +687,18 @@ test('57. active duplicate group is retained and reports physical rows once per 
 test('58. card replacement performs one 24-column setValues and clears tail', () => {
   const ctx=baseContext(); let calls=0, written;
   const sheet={getLastRow:()=>8,getRange(row,col,count,width){return {getValues:()=>[['old1'],['old2'],['']],setValues(values){calls++;written={row,col,count,width,values}}}}};
-  ctx.operatorCardReplace_({sheet,config:{dataStartRow:6}},[[1,2].concat(Array(22).fill(''))]);
+  ctx.operatorCardReplace_({sheet,config:{dataStartRow:6},headerMap:{'ID документа':1}},[[1,2].concat(Array(22).fill(''))]);
   assert.equal(calls,1); assert.equal(written.width,24); assert.equal(written.values.length,2); assert.ok(written.values[1].every(v=>v===''));
 });
 test('59. zero result clears old card in one batch', () => {
   const ctx=baseContext(); let values; const sheet={getLastRow:()=>6,getRange(){return {getValues:()=>[['old']],setValues(v){values=v}}}};
-  ctx.operatorCardReplace_({sheet,config:{dataStartRow:6}},[]); assert.equal(values.length,1); assert.equal(values[0].length,24); assert.ok(values[0].every(v=>v===''));
+  ctx.operatorCardReplace_({sheet,config:{dataStartRow:6},headerMap:{'ID документа':1}},[]); assert.equal(values.length,1); assert.equal(values[0].length,24); assert.ok(values[0].every(v=>v===''));
 });
 test('60. operator implementation never writes facts, dictionaries, or change history', () => {
   const text=fs.readFileSync('OperatorCard.gs','utf8');
   assert.doesNotMatch(text,/appendRow|\.clear\s*\(|deleteRows|insertRows/);
   assert.doesNotMatch(text,/getSystemSheetContext_\('CHANGE_HISTORY'\)/);
-  assert.match(text,/getRange\(start, 1, writeCount, 24\)\.setValues/);
+  assert.match(text,/getRange\(start, cardStartColumn, writeCount, 24\)\.setValues/);
 });
 
 
@@ -738,7 +738,7 @@ function operatorWorkflowFixture(options = {}) {
     config: { name: 'Документы объектов', headerRow: 3, dataStartRow: 4 }, headers: operatorWorkflowDocumentHeaders.slice(), headerMap: documentMap,
     sheet: { getLastRow: () => 3, getRange() { throw new Error('fact data range must not be read for empty fixture'); } }
   };
-  const card = { config: { name: 'Карточка операциониста', headerRow: 5, dataStartRow: 6 }, headers: operatorWorkflowCardHeaders.slice(), sheet: {} };
+  const card = { config: { name: 'Карточка операциониста', headerRow: 5, dataStartRow: 6 }, headers: operatorWorkflowCardHeaders.slice(), headerMap: {'ID документа': 1}, sheet: {} };
   const operation = {
     config: { name: 'История операций', headerRow: 2, dataStartRow: 3 }, headers: operatorWorkflowOperationHeaders.slice(),
     sheet: { getLastRow: () => 2, getRange() { return { setValues(rows) { calls.operationRows.push(rows[0].slice()); } }; } }
@@ -824,6 +824,49 @@ test('69. history failure after successful card write keeps card and exposes ori
   assert.match(response.warnings.join(' '), /Карточка загружена.*Лист журнала защищён/);
   assert.match(errors.join(' '), /Лист журнала защищён/);
   assert.equal(fixture.calls.operationRows.length, 0);
+});
+
+
+test('70. shifted facts and independently shifted card use their ID-document start columns', () => {
+  const ctx = baseContext();
+  const factHeaders = [''].concat(operatorWorkflowDocumentHeaders);
+  const cardHeaders = ['', ''].concat(operatorWorkflowCardHeaders).concat(['', '  ']);
+  assert.equal(ctx.operatorCardValidateHeaders_(factHeaders, cardHeaders, 'Документы объектов', 'Карточка', 2, 3), true);
+
+  const workValues = operatorWorkflowDocumentHeaders.map(header => {
+    if (header === 'ID документа') return 'DOC-7';
+    if (header === 'ID объекта') return 'OBJ-2';
+    if (header === 'ID типа документа') return 'TYPE-3';
+    if (header === 'Статус записи') return 'Активная';
+    return header;
+  });
+  const factRow = ['служебное значение слева'].concat(workValues);
+  const physicalIndexes = Object.fromEntries(operatorWorkflowDocumentHeaders.map((header, index) => [header, index + 1]));
+  const prepared = ctx.operatorCardPrepareRows_([factRow], {
+    documentId: physicalIndexes['ID документа'], objectId: physicalIndexes['ID объекта'],
+    documentTypeId: physicalIndexes['ID типа документа'], documentStatus: physicalIndexes['Статус документа'],
+    holderId: physicalIndexes['ID сотрудника — у кого документ'], foremanId: physicalIndexes['ID ответственного прораба'],
+    createdAt: physicalIndexes['Дата создания'], recordStatus: physicalIndexes['Статус записи']
+  }, ctx.operatorCardNormalizeFilters_({}), {active:false}, 4, 1);
+  assert.equal(prepared.cardRows.length, 1);
+  assert.equal(prepared.cardRows[0].length, 24);
+  assert.equal(prepared.cardRows[0][0], 'DOC-7');
+  assert.ok(!prepared.cardRows[0].includes('служебное значение слева'));
+
+  const rangeCalls = [];
+  const sheet = {
+    getLastRow: () => 6,
+    getRange(row, column, rowCount, columnCount) {
+      rangeCalls.push({row, column, rowCount, columnCount});
+      return { getValues: () => [['OLD-DOC']], setValues(values) { this.values = values; } };
+    }
+  };
+  ctx.operatorCardReplace_({sheet, config:{dataStartRow:6}, headerMap:{'ID документа':3}}, prepared.cardRows);
+  assert.equal(rangeCalls.length, 2);
+  assert.deepEqual(rangeCalls.map(call => call.column), [3, 3]);
+  assert.equal(rangeCalls[0].columnCount, 1);
+  assert.equal(rangeCalls[1].columnCount, 24);
+  assert.ok(rangeCalls.every(call => call.column >= 3), 'columns left of the card block must not be touched');
 });
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);
