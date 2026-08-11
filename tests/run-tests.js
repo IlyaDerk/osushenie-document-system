@@ -750,6 +750,8 @@ function operatorWorkflowFixture(options = {}) {
   ctx.operatorCardGetFilterData_ = () => ({ objects: [{ id:'', name:'Все', isAllObjects:true }], foremen: [], employees: [], documentTypes: [] });
   ctx.operatorCardValidateSelection_ = options.validationError ? () => { throw new Error(options.validationError); } : () => {};
   ctx.operatorCardPrepareRows_ = () => ({ activeCount: options.activeCount == null ? 2 : options.activeCount, rows: [], cardRows: Array.from({length: options.loadedCount == null ? 2 : options.loadedCount}, (_, index) => [index + 1].concat(Array(23).fill(''))), warnings: (options.warnings || []).slice(), duplicateIdsCount: options.duplicateIdsCount || 0, invalidDatesCount: 0 });
+  ctx.operatorCardGetValidationData_ = () => [];
+  ctx.operatorCardApplyValidations_ = () => {};
   ctx.operatorCardReplace_ = () => { calls.cardWrites++; };
   ctx.getSystemSheetContext_ = key => {
     calls.sheetKeys.push(key);
@@ -867,6 +869,129 @@ test('70. shifted facts and independently shifted card use their ID-document sta
   assert.equal(rangeCalls[0].columnCount, 1);
   assert.equal(rangeCalls[1].columnCount, 24);
   assert.ok(rangeCalls.every(call => call.column >= 3), 'columns left of the card block must not be touched');
+});
+
+
+function operatorDictionaryContext(headers, dataStartRow, rows) {
+  const headerMap = Object.fromEntries(headers.map((header, index) => [header, index + 1]).filter(entry => entry[0]));
+  return {
+    headers, headerMap, config: {dataStartRow},
+    sheet: {
+      getLastRow: () => dataStartRow + rows.length - 1,
+      getRange(row, column, rowCount, columnCount) {
+        return {getValues: () => rows.slice(0, rowCount).map(values => values.slice(column - 1, column - 1 + columnCount))};
+      }
+    }
+  };
+}
+
+test('71. filter data reads shifted real objects, test foremen, and unique card statuses', () => {
+  const ctx = baseContext();
+  const contexts = {
+    OBJECTS: operatorDictionaryContext(['','ID объекта','Название'], 4, [
+      ['', '10', 'Дом 10'], ['', '2', 'Дом 2']
+    ]),
+    EMPLOYEES: operatorDictionaryContext(['','ID Сотрудника','ФИО сотрудника','Должность'], 5, [
+      ['', 'E1', 'Иванов', '  эКсПеДиТоР\u00a0 '], ['', 'E2', 'Петров', 'Бухгалтер']
+    ]),
+    DOCUMENT_TYPES: operatorDictionaryContext(['','ID типа документа','Тип документа'], 5, [
+      ['', 'T1', 'Акт']
+    ]),
+    CARD_DICTIONARY: operatorDictionaryContext(['','Статус документа'], 3, [
+      ['', ' Подписан '], ['', ''], ['', 'ПОДПИСАН'], ['', 'На согласовании']
+    ])
+  };
+  ctx.getSystemSheetContext_ = key => contexts[key];
+  const result = ctx.operatorCardGetFilterData_();
+  assert.deepEqual(Array.from(result.objects, item => item.name), ['Все','Дом 2','Дом 10']);
+  assert.equal(result.objects[0].isAllObjects, true);
+  assert.equal(result.objects.filter(item => item.isAllObjects).length, 1);
+  assert.deepEqual(Array.from(result.objects.slice(1), item => ({id:item.id,name:item.name,isAllObjects:item.isAllObjects})), [
+    {id:'2',name:'Дом 2',isAllObjects:false},{id:'10',name:'Дом 10',isAllObjects:false}
+  ]);
+  assert.deepEqual(Array.from(result.foremen, item => item.id), ['E1']);
+  assert.deepEqual(Array.from(result.documentStatuses), ['Все','Подписан','На согласовании']);
+});
+
+test('72. document status server validation accepts dictionary values only', () => {
+  const ctx = baseContext();
+  const data = {objects:[{id:'2'}],foremen:[],documentTypes:[],employees:[],documentStatuses:['Все','Подписан']};
+  const valid = ctx.operatorCardNormalizeFilters_({documentStatus:'  пОдПиСаН '});
+  assert.doesNotThrow(() => ctx.operatorCardValidateSelection_(valid, data));
+  const all = ctx.operatorCardNormalizeFilters_({documentStatus:'Все'});
+  assert.equal(all.documentStatus, '');
+  assert.throws(() => ctx.operatorCardValidateSelection_(ctx.operatorCardNormalizeFilters_({documentStatus:'Удалён'}), data), /неизвестный статус/);
+});
+
+test('73. validation dictionaries use configured sources and preserve employee-before-client order', () => {
+  const ctx = baseContext();
+  const values = {
+    'EMPLOYEES|ФИО сотрудника':['Сотрудник 1','Сотрудник 2'],
+    'CLIENTS|Наименование клиента':['Клиент 1'],
+    'CARD_DICTIONARY|Статус документа':['Подписан'],
+    'CARD_DICTIONARY|Оригинал / ЭДО':['Оригинал','ЭДО'],
+    'CARD_DICTIONARY|Где документ':['Мытищи'],
+    'CARD_DICTIONARY|Оплачен':['Оплачен'],
+    'CARD_DICTIONARY|ГУ (Да/Нет)':['Да','Нет']
+  };
+  ctx.operatorCardReadUniqueColumn_ = (key, header) => values[key+'|'+header].slice();
+  const result = ctx.operatorCardGetValidationData_();
+  const byHeader = Object.fromEntries(Array.from(result, item => [item.header, Array.from(item.values)]));
+  assert.deepEqual(byHeader['Статус документа'], ['Подписан']);
+  assert.deepEqual(byHeader['Оригинал / ЭДО'], ['Оригинал','ЭДО']);
+  assert.deepEqual(byHeader['У кого документ'], ['Сотрудник 1','Сотрудник 2','Клиент 1']);
+  assert.deepEqual(byHeader['Где документ'], ['Мытищи']);
+  assert.deepEqual(byHeader['Кто передал'], ['Сотрудник 1','Сотрудник 2']);
+  assert.deepEqual(byHeader['Оплачен'], ['Оплачен']);
+  assert.deepEqual(byHeader['ГУ (Да/Нет)'], ['Да','Нет']);
+});
+
+test('74. card validations use headerMap ranges and survive reload, zero result, and repeat load', () => {
+  const ctx = baseContext();
+  const validationColumns = {'Статус документа':8,'Оригинал / ЭДО':9,'У кого документ':11,'Где документ':12,'Кто передал':13,'Оплачен':14,'ГУ (Да/Нет)':16};
+  const validations = {};
+  const writes = [];
+  ctx.SpreadsheetApp.newDataValidation = () => {
+    const state = {};
+    return {requireValueInList(values, showDropdown){state.values=values.slice();state.showDropdown=showDropdown;return this},setAllowInvalid(value){state.allowInvalid=value;return this},build(){return state}};
+  };
+  const sheet = {
+    getMaxRows: () => 20,
+    getLastRow: () => 6,
+    getRange(row,column,rowCount,columnCount) {
+      return {
+        getValues: () => [['OLD']],
+        setValues(values) { writes.push({row,column,rowCount,columnCount,values}); },
+        setDataValidation(rule) { validations[column] = {row,rowCount,columnCount,rule}; }
+      };
+    }
+  };
+  const context = {sheet,config:{dataStartRow:6},headerMap:Object.assign({'ID документа':3},validationColumns)};
+  const data = Object.keys(validationColumns).map(header => ({header,values:[header+' value']}));
+  ctx.operatorCardApplyValidations_(context, data);
+  assert.deepEqual(Object.keys(validations).map(Number).sort((a,b)=>a-b), [8,9,11,12,13,14,16]);
+  assert.ok(Object.values(validations).every(item => item.row===6 && item.rowCount===15 && item.columnCount===1));
+  assert.ok(Object.values(validations).every(item => item.rule.allowInvalid===true));
+  const snapshot = JSON.stringify(validations);
+  const row = ['DOC'].concat(Array(23).fill(''));
+  ctx.operatorCardReplace_(context,[row]);
+  ctx.operatorCardReplace_(context,[]);
+  ctx.operatorCardReplace_(context,[row]);
+  assert.equal(JSON.stringify(validations), snapshot, 'setValues must preserve validations');
+  assert.equal(writes.length,3);
+  assert.ok(writes.every(write => write.column===3 && write.columnCount===24));
+});
+
+test('75. sidebar groups creation dates and reset is local-only for all filters', () => {
+  const text = fs.readFileSync('OperatorSidebar.html','utf8');
+  assert.match(text, /<div class="group-label">Дата создания<\/div>/);
+  assert.match(text, /for="from">От<\/label><input id="from" type="date"/);
+  assert.match(text, /for="to">До<\/label><input id="to" type="date"/);
+  assert.match(text, />Очистить фильтры<\/button>/);
+  assert.match(text, /function resetFilters\(\)[\s\S]*\['object','foreman','status','type','holder'\][\s\S]*value='Все'[\s\S]*el\('from'\)\.value=''[\s\S]*el\('to'\)\.value=''/);
+  const resetBody = text.match(/function resetFilters\(\)\{([\s\S]*?)\}\nel\('reset'\)/)[1];
+  assert.doesNotMatch(resetBody,/google\.script\.run|applyOperatorFilters/);
+  assert.match(text,/fillValues\('statuses',data\.documentStatuses\|\|\[\]\)/);
 });
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);

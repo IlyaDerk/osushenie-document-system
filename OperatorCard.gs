@@ -11,18 +11,50 @@ function operatorCardReadDictionary_(sheetKey, fields) {
   const context = getSystemSheetContext_(sheetKey);
   const lastRow = context.sheet.getLastRow();
   if (lastRow < context.config.dataStartRow) return [];
+  const fieldColumns = fields.map(function (field) {
+    return context.headerMap[sysNormalizeHeader_(field.header)];
+  });
+  const firstColumn = Math.min.apply(null, fieldColumns);
+  const lastColumn = Math.max.apply(null, fieldColumns);
   const values = context.sheet.getRange(
-    context.config.dataStartRow, 1,
+    context.config.dataStartRow, firstColumn,
     lastRow - context.config.dataStartRow + 1,
-    context.headers.length
+    lastColumn - firstColumn + 1
   ).getValues();
   return values.map(function (row) {
     const item = {};
-    fields.forEach(function (field) {
-      item[field.key] = operatorCardNormalizeText_(row[context.headerMap[sysNormalizeHeader_(field.header)] - 1]);
+    fields.forEach(function (field, index) {
+      item[field.key] = operatorCardNormalizeText_(row[fieldColumns[index] - firstColumn]);
     });
     return item;
   }).filter(function (item) { return item.id && item.name; });
+}
+
+function operatorCardReadUniqueColumn_(sheetKey, header) {
+  const context = getSystemSheetContext_(sheetKey);
+  const lastRow = context.sheet.getLastRow();
+  if (lastRow < context.config.dataStartRow) return [];
+  const column = context.headerMap[sysNormalizeHeader_(header)];
+  const values = context.sheet.getRange(
+    context.config.dataStartRow,
+    column,
+    lastRow - context.config.dataStartRow + 1,
+    1
+  ).getValues();
+  const seen = {};
+  const result = [];
+  values.forEach(function (row) {
+    const value = operatorCardNormalizeText_(row[0]);
+    const key = operatorCardFold_(value);
+    if (!value || seen[key]) return;
+    seen[key] = true;
+    result.push(value);
+  });
+  return result;
+}
+
+function operatorCardWithAll_(values) {
+  return [SYSTEM_CONFIG.VALUES.ALL_OBJECTS_LABEL].concat(values);
 }
 
 function operatorCardBuildObjects_(rows) {
@@ -47,13 +79,17 @@ function operatorCardGetFilterData_() {
   const documentTypes = operatorCardReadDictionary_('DOCUMENT_TYPES', [
     { key: 'id', header: H.DOCUMENT_TYPE_ID }, { key: 'name', header: H.DOCUMENT_TYPE }
   ]).sort(function (a, b) { return operatorCardNaturalCompare_(a.name, b.name) || operatorCardNaturalCompare_(a.id, b.id); });
+  const documentStatuses = operatorCardWithAll_(
+    operatorCardReadUniqueColumn_('CARD_DICTIONARY', H.DOCUMENT_STATUS)
+  );
   return {
     objects: objects,
     foremen: employees.filter(function (employee) {
       return operatorCardFold_(employee.position) === operatorCardFold_(SYSTEM_CONFIG.VALUES.FOREMAN_POSITION);
     }),
     employees: employees,
-    documentTypes: documentTypes
+    documentTypes: documentTypes,
+    documentStatuses: documentStatuses
   };
 }
 
@@ -76,7 +112,8 @@ function operatorCardNormalizeFilters_(filters) {
     object: object,
     foremanId: operatorCardNormalizeText_(source.foremanId),
     foremanName: operatorCardNormalizeText_(source.foremanName),
-    documentStatus: operatorCardNormalizeText_(source.documentStatus),
+    documentStatus: operatorCardFold_(source.documentStatus) === operatorCardFold_(SYSTEM_CONFIG.VALUES.ALL_OBJECTS_LABEL)
+      ? '' : operatorCardNormalizeText_(source.documentStatus),
     documentTypeId: operatorCardNormalizeText_(source.documentTypeId),
     documentTypeName: operatorCardNormalizeText_(source.documentTypeName),
     holderId: operatorCardNormalizeText_(source.holderId),
@@ -94,6 +131,57 @@ function operatorCardValidateSelection_(filters, data) {
   requireId(filters.foremanId, data.foremen, 'ответственный прораб');
   requireId(filters.documentTypeId, data.documentTypes, 'тип документа');
   requireId(filters.holderId, data.employees, 'сотрудник — держатель документа');
+  if (filters.documentStatus && !data.documentStatuses.some(function (status) {
+    return operatorCardFold_(status) === operatorCardFold_(filters.documentStatus);
+  })) throw new Error('Выбран неизвестный статус документа «' + filters.documentStatus + '». Обновите справочники.');
+}
+
+function operatorCardMergeUniqueValues_(groups) {
+  const seen = {};
+  const result = [];
+  groups.forEach(function (values) {
+    values.forEach(function (value) {
+      const normalized = operatorCardNormalizeText_(value);
+      const key = operatorCardFold_(normalized);
+      if (!normalized || seen[key]) return;
+      seen[key] = true;
+      result.push(normalized);
+    });
+  });
+  return result;
+}
+
+function operatorCardGetValidationData_() {
+  const employeeNames = operatorCardReadUniqueColumn_('EMPLOYEES', H.EMPLOYEE_NAME);
+  const clientNames = operatorCardReadUniqueColumn_('CLIENTS', H.CLIENT_NAME);
+  return [
+    { header: H.DOCUMENT_STATUS, values: operatorCardReadUniqueColumn_('CARD_DICTIONARY', H.DOCUMENT_STATUS) },
+    { header: H.ORIGINAL_EDO, values: operatorCardReadUniqueColumn_('CARD_DICTIONARY', H.ORIGINAL_EDO) },
+    { header: H.DOCUMENT_HOLDER, values: operatorCardMergeUniqueValues_([employeeNames, clientNames]) },
+    { header: H.DOCUMENT_LOCATION, values: operatorCardReadUniqueColumn_('CARD_DICTIONARY', H.DOCUMENT_LOCATION) },
+    { header: H.TRANSFERRED_BY, values: employeeNames },
+    { header: H.PAID, values: operatorCardReadUniqueColumn_('CARD_DICTIONARY', H.PAID) },
+    { header: H.GU_FLAG, values: operatorCardReadUniqueColumn_('CARD_DICTIONARY', H.GU_FLAG) }
+  ];
+}
+
+function operatorCardApplyValidations_(cardContext, validationData) {
+  const rowCount = cardContext.sheet.getMaxRows() - cardContext.config.dataStartRow + 1;
+  if (rowCount < 1) return;
+  validationData.forEach(function (validation) {
+    if (!validation.values.length) return;
+    const column = cardContext.headerMap[sysNormalizeHeader_(validation.header)];
+    const rule = SpreadsheetApp.newDataValidation()
+      .requireValueInList(validation.values, true)
+      .setAllowInvalid(true)
+      .build();
+    cardContext.sheet.getRange(
+      cardContext.config.dataStartRow,
+      column,
+      rowCount,
+      1
+    ).setDataValidation(rule);
+  });
 }
 
 function operatorCardParseDateRange_(fromText, toText, timezone) {
@@ -281,6 +369,7 @@ function operatorCardApply_(rawFilters) {
         createdAt: index(H.CREATED_AT), recordStatus: index(H.RECORD_STATUS)
       }, filters, range, documents.config.dataStartRow, documentsStartColumn - 1);
       result.loadedCount = result.cardRows.length;
+      operatorCardApplyValidations_(card, operatorCardGetValidationData_());
       operatorCardReplace_(card, result.cardRows);
       cardWritten = true;
       const status = result.loadedCount === 0 ? SYSTEM_CONFIG.VALUES.OPERATION_STATUS_NO_CHANGES : (result.warnings.length ? SYSTEM_CONFIG.VALUES.OPERATION_STATUS_SUCCESS_WITH_WARNINGS : SYSTEM_CONFIG.VALUES.OPERATION_STATUS_SUCCESS);

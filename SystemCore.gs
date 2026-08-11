@@ -172,7 +172,7 @@ const SYSTEM_CONFIG = {
     OPERATOR_CARD_LOAD_OPERATION_TYPE: 'Загрузка карточки операциониста',
 
     ALL_OBJECTS_LABEL: 'Все',
-    FOREMAN_POSITION: 'Производитель работ (прораб)',
+    FOREMAN_POSITION: 'Экспедитор',
 
     CHANGE_ACTION_CREATE: 'Создание',
     CHANGE_ACTION_SYNC: 'Синхронизация',
