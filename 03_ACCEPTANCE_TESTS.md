@@ -153,4 +153,4 @@ email активного пользователя, визуальный вид H
 
 ## Save-stage карточки
 
-Проверить сценарии A–Q из `06_OPERATOR_CARD_SAVE_SPEC.md`, all-or-nothing pre-write validation, optimistic conflict, employee/client holder, очистку технических ID, duplicate resolution по физическим строкам и отсутствие второй load-operation после refresh.
+Проверить сценарии A–Q из `06_OPERATOR_CARD_SAVE_SPEC.md`, partial save для row/group-level ошибок, глобальную блокировку только при structural/write errors, optimistic conflict, employee/client holder, очистку технических ID, duplicate resolution по физическим строкам и отсутствие второй load-operation после refresh.

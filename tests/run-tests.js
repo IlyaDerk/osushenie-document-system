@@ -1203,4 +1203,37 @@ test('101. malformed change-history is global and facts remain untouched', () =>
   assert.equal(factWrites,0); assert.equal(idInsideLock,true);
 });
 
+test('102. an edit to only a read-only field produces a row error naming the field', () => {
+  const ctx=baseContext();
+  const readOnly=partialSaveFixture(ctx,{documentId:'DOC-RO',factRow:30,card:{'Номер договора':'CHANGED'}});
+  const plan=ctx.operatorCardBuildSavePlan_([readOnly.card],[readOnly.fact],partialDictionaries(),new Date(),'x@x','OP-20260804-0001');
+  assert.equal(plan.rows.length,0); assert.equal(plan.rowErrors.length,1);
+  assert.match(plan.rowErrors[0].message,/Номер договора/);
+});
+test('103. a read-only-only error does not reject an unrelated valid row', () => {
+  const ctx=baseContext();
+  const valid=partialSaveFixture(ctx,{documentId:'DOC-1',factRow:10,card:{'Комментарий':'new'}});
+  const readOnly=partialSaveFixture(ctx,{documentId:'DOC-RO',factRow:30,card:{'Номер договора':'CHANGED'}});
+  const plan=ctx.operatorCardBuildSavePlan_([valid.card,readOnly.card],[valid.fact,readOnly.fact],partialDictionaries(),new Date(),'x@x','OP-20260804-0001');
+  assert.deepEqual(Array.from(plan.rows,item=>item.documentId),['DOC-1']);
+  assert.equal(plan.rowErrors.length,1); assert.match(plan.rowErrors[0].message,/Номер договора/);
+});
+test('104. a fact-write failure is fatal and never claims guaranteed save success', () => {
+  const ctx=baseContext(); let operationRow=null;
+  const operationHeaders=['ID операции','Статус операции','Документов с изменениями','Строк факта обновлено','Полей изменено','Ошибок','Текст ошибки / комментарий'];
+  const generic={headers:[],headerMap:{'ID документа':1},config:{name:'X',dataStartRow:2},sheet:{getLastRow:()=>1,getRange:()=>({getValues:()=>[],setValues(){}})}};
+  const operation={headers:operationHeaders,headerMap:{},config:{name:'История операций',dataStartRow:3},sheet:{getLastRow:()=>2,getRange:()=>({setValues(rows){operationRow=rows[0]}})}};
+  ctx.withDocumentLock_=callback=>callback(); ctx.getActiveUserEmail_=()=> 'x@x';
+  ctx.getSystemSheetContext_=key=>key==='OPERATION_HISTORY'?operation:generic;
+  ctx.operatorCardValidateHeaders_=()=>true; ctx.operatorCardSaveDictionaries_=()=>({});
+  ctx.operatorCardSaveRead_=()=>[]; ctx.generateOperationId_=()=> 'OP-20260804-0001';
+  ctx.operatorCardBuildSavePlan_=()=>({rows:[{documentId:'DOC-1'}],changes:[{}],rowErrors:[],groupErrors:[],duplicateIds:[]});
+  ctx.operatorCardSaveWriteFacts_=()=>{throw new Error('write boom')};
+  let thrown; try{ctx.operatorCardSave_({})}catch(error){thrown=error}
+  assert.ok(thrown); assert.match(thrown.message,/Часть изменений могла быть записана/);
+  assert.doesNotMatch(thrown.message,/Данные документов сохранены/);
+  assert.equal(operationRow[operationHeaders.indexOf('Статус операции')],'Ошибка');
+  assert.match(operationRow[operationHeaders.indexOf('Текст ошибки / комментарий')],/неопредел|Часть изменений могла быть записана/);
+});
+
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);

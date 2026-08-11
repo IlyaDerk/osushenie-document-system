@@ -11,6 +11,7 @@
 `saveOperatorCardChanges` передаёт работу в `OperatorCardSave.gs`. **Partial save is the business rule**: ошибка одной строки не лишает оператора возможности сохранить корректную часть работы.
 
 Под `withDocumentLock_()` до первой записи проверяются все глобальные зависимости: `DOCUMENTS`, `OPERATOR_CARD`, `CARD_DICTIONARY`, `EMPLOYEES`, `CLIENTS`, `CHANGE_HISTORY`, `OPERATION_HISTORY`, их заголовки и системная конфигурация. Ошибка этого уровня фатальна и не меняет факты. `generateOperationId_()` также вызывается только внутри lock.
+Ошибка внутри fact write также global/fatal: завершённой запись считается только после успешного завершения всех batch writes. При сбое результат считается неопределённым: часть batch ranges могла быть записана, rollback не обещается, success не возвращается, а оператор должен повторно загрузить карточку до продолжения работы.
 
 Ошибки physical row, identity, optimistic `Дата обновления`, read-only поля, типа, справочника, holder/transfer, перехода статуса и duplicate-group являются row/group-level. Они попадают в `rowErrors` / `groupErrors`; rejected rows не попадают ни в fact write-plan, ни в `История изменений`. Неизменённая строка не требует write и не становится ошибкой только из-за stale version.
 

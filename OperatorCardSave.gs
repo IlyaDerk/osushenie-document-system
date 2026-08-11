@@ -143,11 +143,17 @@ function operatorCardBuildSavePlan_(cardItems, factItems, dictionaries, now, ema
         }
         return !operatorCardSaveEqual_(card.values[header], factValue);
       });
-      const readOnlyChanged = SYSTEM_CONFIG.CARD_FIELD_MAP.some(function (mapping) {
+      const changedReadOnlyHeaders = SYSTEM_CONFIG.CARD_FIELD_MAP.filter(function (mapping) {
         return !mapping.editable && !mapping.technical &&
+          mapping.cardHeader !== H.UPDATED_AT && mapping.cardHeader !== H.UPDATED_BY_EMAIL &&
           !operatorCardSaveEqual_(card.values[mapping.cardHeader], fact.values[mapping.factHeader]);
+      }).map(function (mapping) {
+        return mapping.cardHeader;
       });
-      if (!preliminaryChanged && !readOnlyChanged) return;
+      if (!preliminaryChanged && !changedReadOnlyHeaders.length) return;
+      if (changedReadOnlyHeaders.length) {
+        throw new Error('Изменено поле только для чтения «' + changedReadOnlyHeaders.join('», «') + '».');
+      }
 
       const proposed = operatorCardSaveProposeRow_(card, fact, dictionaries);
       const changes = [];
@@ -168,14 +174,6 @@ function operatorCardBuildSavePlan_(cardItems, factItems, dictionaries, now, ema
           operatorCardSaveVersion_(fact.values[H.UPDATED_AT])) {
         throw new Error('Данные изменились после загрузки. Нажмите «Применить» или исправьте строку после обновления.');
       }
-      SYSTEM_CONFIG.CARD_FIELD_MAP.filter(function (mapping) {
-        return !mapping.editable && !mapping.technical;
-      }).forEach(function (mapping) {
-        if (!operatorCardSaveEqual_(card.values[mapping.cardHeader], fact.values[mapping.factHeader])) {
-          throw new Error('Изменено поле только для чтения «' + mapping.cardHeader + '».');
-        }
-      });
-
       const statusChange = changes.some(function (change) { return change.header === H.RECORD_STATUS; });
       const businessChange = changes.some(function (change) { return change.header !== H.RECORD_STATUS; });
       if (statusChange) {
@@ -440,6 +438,8 @@ function operatorCardSave_(filters) {
     let operationId = '';
     let operationContext = null;
     let state = { documents: 0, rows: 0, fields: 0, duplicates: 0, errors: 0 };
+    let factWriteStarted = false;
+    let factWriteCompleted = false;
     const email = getActiveUserEmail_();
     try {
       // All required sources and destinations are validated before the first fact write.
@@ -472,7 +472,9 @@ function operatorCardSave_(filters) {
         errors: plan.rowErrors.length + plan.groupErrors.length
       };
 
+      factWriteStarted = true;
       operatorCardSaveWriteFacts_(documents, plan, now, email);
+      factWriteCompleted = true;
       let postWriteWarning = '';
       try {
         operatorCardSaveWriteChanges_(changeContext, plan.changes);
@@ -519,6 +521,8 @@ function operatorCardSave_(filters) {
       };
     } catch (error) {
       const message = error.message || String(error);
+      const uncertainWriteMessage = 'Во время записи данных произошла ошибка. ' +
+        'Часть изменений могла быть записана. Не продолжайте редактирование до повторной загрузки карточки.';
       // An ID may only be reserved while the document lock is held.
       if (!operationId) {
         try { operationId = generateOperationId_(started); } catch (ignoredIdError) {}
@@ -533,13 +537,18 @@ function operatorCardSave_(filters) {
             status: SYSTEM_CONFIG.VALUES.OPERATION_STATUS_ERROR,
             documents: state.documents, rows: state.rows, fields: state.fields,
             duplicates: state.duplicates, errors: Math.max(1, state.errors),
-            comment: state.rows
-              ? 'Данные документов сохранены, но save завершился ошибкой: ' + message
-              : message
+            comment: factWriteStarted && !factWriteCompleted
+              ? uncertainWriteMessage + ' Причина: ' + message
+              : (factWriteCompleted
+                ? 'Данные документов сохранены, но save завершился ошибкой: ' + message
+                : message)
           });
         } catch (ignoredOperationError) {}
       }
-      if (state.rows) {
+      if (factWriteStarted && !factWriteCompleted) {
+        throw new Error(uncertainWriteMessage + ' Причина: ' + message);
+      }
+      if (factWriteCompleted) {
         return {
           success: true,
           status: SYSTEM_CONFIG.VALUES.OPERATION_STATUS_SUCCESS_WITH_WARNINGS,
