@@ -21,19 +21,26 @@
     </div>
   </div>
   <div class="buttons"><button id="apply" class="apply">Применить</button><button id="reset" class="reset">Очистить фильтры</button></div>
+  <div class="buttons"><button id="save" class="apply" disabled>Внести изменения</button></div>
   <div id="state" class="message"></div><div id="result" class="message"></div><div id="warnings" class="message"></div><div id="error" class="message"></div>
 <script>
 'use strict';
-let data={objects:[],foremen:[],employees:[],documentTypes:[],documentStatuses:[]};
+let data={objects:[],foremen:[],employees:[],clients:[],holders:[],documentTypes:[],documentStatuses:[]};
+let lastAppliedFilters=null;
 const el=id=>document.getElementById(id);
 function label(item){return item.isAllObjects?'Все':item.name+' ['+item.id+']'}
 function fill(id,items){el(id).innerHTML='';items.filter(item=>!item.isAllObjects).forEach(item=>{const option=document.createElement('option');option.value=label(item);el(id).appendChild(option)})}
 function fillValues(id,values){el(id).innerHTML='';values.filter(value=>value!=='Все').forEach(value=>{const option=document.createElement('option');option.value=value;el(id).appendChild(option)})}
 function show(id,text,kind){const node=el(id);node.className='message'+(text?' show '+kind:'');node.textContent=text||''}
-function busy(value,text){el('apply').disabled=value;el('reset').disabled=value;show('state',text||'',value?'loading':'')}
+function busy(value,text){el('apply').disabled=value;el('reset').disabled=value;el('save').disabled=value||!lastAppliedFilters;show('state',text||'',value?'loading':'')}
 function selected(input,items,name){const text=el(input).value.trim();if(!text||text==='Все')return null;const item=items.find(candidate=>label(candidate)===text);if(!item)throw new Error('Выберите '+name+' из справочника.');return item}
 function selectedValue(input,values,name){const text=el(input).value.trim();if(!text||text==='Все')return '';const value=values.find(candidate=>candidate===text);if(!value)throw new Error('Выберите '+name+' из справочника.');return value}
 function clearMessages(){['result','warnings','error'].forEach(id=>show(id,''))}
+function saveProblems(response){
+  const rows=(response.rowErrors||[]).map(item=>(item.documentId||('Строка карточки '+item.cardRow))+(item.factRow?', строка факта '+item.factRow:'')+' — изменения не сохранены: '+item.message);
+  const groups=(response.groupErrors||[]).map(item=>item.documentId+' (строки факта '+(item.factRows||[]).join(', ')+') — изменения не сохранены: '+item.message);
+  return rows.concat(groups);
+}
 function resetFilters(){['object','foreman','status','type','holder','from','to'].forEach(id=>el(id).value='');clearMessages();show('state','')}
 el('reset').onclick=resetFilters;
 el('apply').onclick=function(){
@@ -41,17 +48,22 @@ el('apply').onclick=function(){
   try{
     object=selected('object',data.objects,'объект');foreman=selected('foreman',data.foremen,'прораба');
     status=selectedValue('status',data.documentStatuses,'статус документа');
-    type=selected('type',data.documentTypes,'тип документа');holder=selected('holder',data.employees,'держателя');
+    type=selected('type',data.documentTypes,'тип документа');holder=selected('holder',data.holders,'держателя');
     if(el('from').value&&el('to').value&&el('from').value>el('to').value)throw new Error('Дата от не может быть позже даты до.');
   }catch(error){show('error',error.message,'error');return}
   const filters={object:!object?{allObjects:true,objectId:'',objectName:'Все'}:{allObjects:false,objectId:object.id,objectName:object.name},foremanId:foreman?foreman.id:'',foremanName:foreman?foreman.name:'',documentStatus:status,documentTypeId:type?type.id:'',documentTypeName:type?type.name:'',holderId:holder?holder.id:'',holderName:holder?holder.name:'',dateFrom:el('from').value,dateTo:el('to').value};
   busy(true,'Загрузка карточки...');
-  google.script.run.withSuccessHandler(response=>{busy(false,'');show('result',response.message,response.status==='Успешно'||response.status==='Без изменений'?'success':'warning');if(response.warnings&&response.warnings.length){el('warnings').className='message show warning';el('warnings').innerHTML='<strong>Предупреждения</strong><ul>'+response.warnings.map(w=>'<li>'+escapeHtml(w)+'</li>').join('')+'</ul>'}}).withFailureHandler(error=>{busy(false,'');show('error',error.message||String(error),'error')}).applyOperatorFilters(filters);
+  google.script.run.withSuccessHandler(response=>{lastAppliedFilters=filters;busy(false,'');show('result',response.message,response.status==='Успешно'||response.status==='Без изменений'?'success':'warning');if(response.warnings&&response.warnings.length){el('warnings').className='message show warning';el('warnings').innerHTML='<strong>Предупреждения</strong><ul>'+response.warnings.map(w=>'<li>'+escapeHtml(w)+'</li>').join('')+'</ul>'}}).withFailureHandler(error=>{busy(false,'');show('error',error.message||String(error),'error')}).applyOperatorFilters(filters);
+};
+
+el('save').onclick=function(){
+  if(!lastAppliedFilters)return;clearMessages();busy(true,'Сохранение изменений...');
+  google.script.run.withSuccessHandler(response=>{busy(false,'');show('result',response.message,response.status==='Успешно'||response.status==='Без изменений'?'success':response.status==='Ошибка'?'error':'warning');const problems=saveProblems(response).concat(response.warnings||[]);if(problems.length){el('warnings').className='message show warning';el('warnings').innerHTML='<strong>Предупреждения / ошибки по документам</strong><ul>'+problems.map(w=>'<li>'+escapeHtml(w)+'</li>').join('')+'</ul>';}}).withFailureHandler(error=>{busy(false,'');show('error',error.message||String(error),'error')}).saveOperatorCardChanges(lastAppliedFilters);
 };
 function escapeHtml(value){const div=document.createElement('div');div.textContent=value;return div.innerHTML}
 window.onload=function(){
   busy(true,'Загрузка справочников...');
-  google.script.run.withSuccessHandler(result=>{data=result;fill('objects',data.objects||[]);fill('foremen',data.foremen||[]);fillValues('statuses',data.documentStatuses||[]);fill('types',data.documentTypes||[]);fill('holders',data.employees||[]);resetFilters();busy(false,'')}).withFailureHandler(error=>{busy(true,'');show('error',error.message||String(error),'error')}).getOperatorFilterData();
+  google.script.run.withSuccessHandler(result=>{data=result;fill('objects',data.objects||[]);fill('foremen',data.foremen||[]);fillValues('statuses',data.documentStatuses||[]);fill('types',data.documentTypes||[]);fill('holders',data.holders||[]);resetFilters();busy(false,'')}).withFailureHandler(error=>{busy(true,'');show('error',error.message||String(error),'error')}).getOperatorFilterData();
 };
 </script>
 </body>
