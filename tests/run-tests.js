@@ -3,7 +3,7 @@ const assert = require('assert');
 const fs = require('fs');
 const vm = require('vm');
 const cp = require('child_process');
-const files = ['SystemCore.gs', 'CreateObjectDocuments.gs', 'SyncObjectData.gs', 'ArchiveChangeHistory.gs', 'OperatorCard.gs', 'OperatorCardSave.gs', 'ObjectSheetControls.gs', 'Code.gs'];
+const files = ['SystemCore.gs', 'CreateObjectDocuments.gs', 'SyncObjectData.gs', 'ArchiveChangeHistory.gs', 'OperatorCard.gs', 'OperatorCardSave.gs', 'ObjectSheetControls.gs', 'Code.gs', 'WebAppAuth.gs', 'DocumentWebApp.gs'];
 const source = files.map(f => fs.readFileSync(f, 'utf8')).join('\n');
 let passed = 0;
 function test(name, fn) {
@@ -51,7 +51,8 @@ function baseContext(extra = {}) {
     SpreadsheetApp: extra.SpreadsheetApp || { flush() {} },
     LockService: extra.LockService || {},
     Session: { getActiveUser() { return { getEmail() { return 'tester@example.com'; } }; } },
-    HtmlService: extra.HtmlService || {}
+    HtmlService: extra.HtmlService || {},
+    CacheService: extra.CacheService || { getScriptCache() { return { get() { return null; }, put() {}, remove() {} }; } }
   };
   vm.createContext(sandbox);
   vm.runInContext(source, sandbox);
@@ -1409,6 +1410,80 @@ test('122. identity mismatch never restores from another physical fact row', () 
   const fixture=readOnlyGuardFixture(column,1,card=>{card[1]='OTHER-OBJECT';card[column-1]='ТЕСТ'});
   fixture.ctx.operatorCardHandleReadOnlyEdit_({range:fixture.range});
   assert.equal(fixture.card[column-1],'ТЕСТ'); assert.match(fixture.notes[column],/identity/);
+});
+
+function webAuthFixture(users) {
+  const values = {};
+  const cache = { get(key) { return values[key] || null; }, put(key, value) { values[key] = value; }, remove(key) { delete values[key]; } };
+  const ctx = baseContext({ CacheService: { getScriptCache() { return cache; } } });
+  ctx.Utilities.getUuid = () => 'uuid-' + Object.keys(values).length;
+  ctx.webAppReadUsers_ = () => users;
+  return { ctx, values };
+}
+test('123. web login accepts enabled user and never returns password', () => {
+  const fixture = webAuthFixture([{ login:'irina',password:'Secret',fullName:'Ирина',contact:'irina@work',access:'Да' }]);
+  const result = fixture.ctx.webAppLogin(' irina ', 'Secret');
+  assert.equal(result.user.actor, 'irina@work'); assert.equal(result.user.password, undefined);
+  assert.ok(result.token); assert.ok(!JSON.stringify(result).includes('Secret'));
+});
+test('124. web login rejects wrong password, unknown login and denied access', () => {
+  const enabled = webAuthFixture([{ login:'irina',password:'Secret',fullName:'Ирина',contact:'',access:'Да' }]).ctx;
+  assert.throws(() => enabled.webAppLogin('irina','secret'), /Неверный/);
+  assert.throws(() => enabled.webAppLogin('unknown','Secret'), /Неверный/);
+  const denied = webAuthFixture([{ login:'irina',password:'Secret',fullName:'Ирина',contact:'',access:'Нет' }]).ctx;
+  assert.throws(() => denied.webAppLogin('irina','Secret'), /запрещён/);
+});
+test('125. duplicate web login is blocked and contact falls back to login', () => {
+  const users = [{ login:'irina',password:'a',fullName:'',contact:'',access:'Да' },{ login:'irina',password:'a',fullName:'',contact:'',access:'Да' }];
+  assert.throws(() => webAuthFixture(users).ctx.webAppLogin('irina','a'), /повторяющийся логин/);
+  assert.equal(webAuthFixture([]).ctx.webAppPublicUser_({login:'user',fullName:'',contact:''}).actor, 'user');
+});
+test('126. web sessions expire, renew and can be removed', () => {
+  const fixture=webAuthFixture([{login:'u',password:'p',fullName:'U',contact:'',access:'Да'}]);
+  const result=fixture.ctx.webAppLogin('u','p'); assert.equal(fixture.ctx.webAppRequireSession_(result.token).login,'u');
+  fixture.ctx.webAppLogout(result.token); assert.throws(()=>fixture.ctx.webAppRequireSession_(result.token),/Сессия истекла/);
+});
+test('127. web configuration is centralized and excludes special object', () => {
+  const ctx=baseContext(); const config=vm.runInContext('SYSTEM_CONFIG',ctx); const headers=vm.runInContext('SYSTEM_HEADERS',ctx);
+  assert.deepEqual([config.SHEETS.WEB_USERS.name,config.SHEETS.WEB_USERS.headerRow,config.SHEETS.WEB_USERS.dataStartRow],['Справочник Web-пользователей',4,5]);
+  assert.deepEqual([headers.WEB_LOGIN,headers.WEB_PASSWORD,headers.WEB_FULL_NAME,headers.WEB_CONTACT,headers.WEB_ACCESS],['Логин','Пароль','ФИО','Контакт','Доступ']);
+  const text=fs.readFileSync('DocumentWebApp.gs','utf8'); assert.match(text,/object\.id !== SYSTEM_CONFIG\.VALUES\.ALL_OBJECTS_LABEL/);
+});
+test('128. repeatability rules count every matching row and preserve base type ID', () => {
+  const ctx=baseContext(); assert.equal(ctx.webAppValidRepeatability_('Один'),true); assert.equal(ctx.webAppValidRepeatability_('Много'),true); assert.equal(ctx.webAppValidRepeatability_(''),false);
+  const text=fs.readFileSync('DocumentWebApp.gs','utf8'); assert.match(text,/existing\.length \+ 1/); assert.match(text,/values\[H\.DOCUMENT_TYPE_ID\] = type\.id/);
+  assert.doesNotMatch(text,/ACTIVE_RECORD_STATUS[\s\S]{0,200}webAppReadMatchingDocuments_/);
+});
+test('129. web document preparation fills system/object fields and leaves business fields empty', () => {
+  const ctx=baseContext();
+  ctx.getSystemSpreadsheet_=()=>({getSpreadsheetTimeZone:()=> 'UTC'});
+  const headers=Array.from(vm.runInContext('SYSTEM_CONFIG.SHEETS.DOCUMENTS.requiredHeaders',ctx));
+  const context={headers,headerMap:Object.fromEntries(headers.map((h,i)=>[h,i+1]))};
+  const now=vm.runInContext("new Date('2026-08-17T10:00:00Z')",ctx);
+  const facts={documentIds:{'DOC-15-0001':[4],'DOC-15-0003':[5]}};
+  ctx.generateChangeId_=()=> 'CHG-1';
+  const result=ctx.webAppPrepareDocument_({id:'15',name:'Объект',contractNumber:'D-1',objectStatus:'Действующий',workStartDate:now,workEndPlan:now,workEndFact:'',responsibleForeman:'Иванов',responsibleForemanId:'ST-1'},{id:'TYPE-1'},'Акт №3','Подписан',facts,context,6,now,'actor','OP-1');
+  const value=h=>result.row[headers.indexOf(h)];
+  assert.equal(result.documentId,'DOC-15-0004'); assert.equal(value('ID типа документа'),'TYPE-1'); assert.equal(value('Тип документа'),'Акт №3');
+  assert.equal(value('Статус записи'),'Активная'); assert.equal(value('Источник создания'),'Web-приложение'); assert.equal(value('Кто обновил (email)'),'actor');
+  for(const h of ['Дата создания','Дата обновления','Дата изменения статуса документа']) assert.equal(Object.prototype.toString.call(value(h)),'[object Date]',h);
+  for(const h of ['Дата документа','Оригинал / ЭДО','Комментарий','У кого документ','Где документ','Кто передал','Оплачен','Сумма документа','ГУ (Да/Нет)','Условия ГУ','ID сотрудника — у кого документ','ID сотрудника — кто передал','Отчётный период']) assert.equal(value(h),'',h);
+  assert.equal(result.change.factRow,6); assert.equal(result.change.operationId,'OP-1');
+});
+test('130. create endpoint revalidates everything under the shared lock', () => {
+  const text=fs.readFileSync('DocumentWebApp.gs','utf8');
+  const start=text.indexOf('function webAppCreateDocument'); const lock=text.indexOf('withDocumentLock_',start); const object=text.indexOf('webAppFindObject_',lock); const type=text.indexOf('webAppFindDocumentType_',lock); const status=text.indexOf('webAppReadStatuses_',lock); const facts=text.indexOf('webAppReadMatchingDocuments_',lock);
+  assert.ok(lock>start && object>lock && type>object && status>type && facts>status); assert.match(text,/OPERATION_STATUS_NO_CHANGES/); assert.match(text,/factWritten/);
+});
+test('131. web writes are batched and operation/change contracts are explicit', () => {
+  const text=fs.readFileSync('DocumentWebApp.gs','utf8'); assert.doesNotMatch(text,/appendRow\s*\(/); assert.match(text,/\.setValues\(\[row\]\)/);
+  assert.match(text,/WEB_APP_OPERATION_TYPE/); assert.match(text,/CHANGE_ACTION_CREATE/); assert.match(text,/FIELDS_CHANGED\] = operation\.changed/);
+  assert.match(text,/generateOperationId_/); assert.match(text,/generateChangeId_\(operationId, 1\)/);
+});
+test('132. web HTML uses safe DOM output, sessionStorage and exact payload', () => {
+  const html=fs.readFileSync('DocumentWebApp.html','utf8'); assert.doesNotMatch(html,/\.innerHTML\s*=/); assert.match(html,/textContent/); assert.match(html,/sessionStorage/);
+  assert.match(html,/\{ objectId: el\('object'\)\.value, documentTypeId: el\('documentType'\)\.value, documentStatus: el\('status'\)\.value \}/);
+  assert.doesNotMatch(fs.readFileSync('WebAppAuth.gs','utf8'),/return\s+\{[^}]*password/);
 });
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);

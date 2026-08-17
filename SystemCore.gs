@@ -123,7 +123,12 @@ const SYSTEM_HEADERS = Object.freeze({
   MANDATORY: 'Обязательность',
   CREATE_ON_OBJECT_CREATION: 'Создавать при создании объекта',
   EXECUTION_DEADLINE: 'Срок на исполнение от даты создания',
-  REPEATABILITY: 'Повторяемость'
+  REPEATABILITY: 'Повторяемость',
+  WEB_LOGIN: 'Логин',
+  WEB_PASSWORD: 'Пароль',
+  WEB_FULL_NAME: 'ФИО',
+  WEB_CONTACT: 'Контакт',
+  WEB_ACCESS: 'Доступ'
 });
 
 
@@ -195,7 +200,10 @@ const SYSTEM_CONFIG = {
     OBJECT_DATA_SYNC_SOURCE: 'Синхронизация данных объектов',
     CHANGE_HISTORY_ARCHIVE_SOURCE: 'Архивация истории изменений',
     OBJECT_SHEET_CHANGE_SOURCE: 'Лист объектов',
-    AUTOMATION_SOURCE: 'Автоматизация'
+    AUTOMATION_SOURCE: 'Автоматизация',
+    WEB_APP_SOURCE: 'Web-приложение',
+    WEB_APP_OPERATION_TYPE: 'Создание документа через Web-приложение',
+    WEB_ACCESS_ALLOWED: 'Да'
   },
 
   /**
@@ -405,6 +413,19 @@ const SYSTEM_CONFIG = {
         H.CREATE_ON_OBJECT_CREATION,
         H.EXECUTION_DEADLINE,
         H.REPEATABILITY
+      ]
+    },
+
+    WEB_USERS: {
+      name: 'Справочник Web-пользователей',
+      headerRow: 4,
+      dataStartRow: 5,
+      requiredHeaders: [
+        H.WEB_LOGIN,
+        H.WEB_PASSWORD,
+        H.WEB_FULL_NAME,
+        H.WEB_CONTACT,
+        H.WEB_ACCESS
       ]
     }
   },
