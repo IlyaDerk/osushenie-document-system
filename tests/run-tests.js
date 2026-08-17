@@ -335,7 +335,7 @@ function creationPrepareFixture(count) {
   const missing = Array.from({ length: count }, (_, i) => ({
     object: {
       id: 'OBJ' + String(i + 1).padStart(2, '0'), name: 'Объект ' + (i + 1), contractNumber: 'DOG-' + (i + 1),
-      objectStatus: 'В работе', workStartDate: new Date('2026-08-01T00:00:00Z'),
+      objectStatus: 'Действующий', workStartDate: new Date('2026-08-01T00:00:00Z'),
       workEndPlan: new Date('2026-08-31T00:00:00Z'), workEndFact: i === 0 ? new Date('2026-08-20T00:00:00Z') : '',
       responsibleForeman: 'Иванов', responsibleForemanId: 'ST-1'
     },
@@ -359,7 +359,7 @@ test('24. 18 created documents produce 18 history rows, not field-per-value rows
 test('25. initial creation snapshot contains main nonempty fields', () => {
   const snapshot = creationPrepareFixture(1).changeRows[0].newValue;
   ['ID документа: DOC-OBJ01-0001','ID объекта: OBJ01','Название объекта: Объект 1','Тип документа: Акт','ID типа документа: DT-1',
-   'Номер договора: DOG-1','Статус документа: Ожидает заполнения','Статус объекта: В работе',
+   'Номер договора: DOG-1','Статус документа: Ожидает заполнения','Статус объекта: Действующий',
    'Дата начала работ:','Дата окончания (по плану):','Дата окончания (по факту):',
    'Ответственный прораб: Иванов','ID ответственного прораба: ST-1','Источник создания: Создание документов по объекту',
    'Статус записи: Активная'].forEach(part => assert.ok(snapshot.includes(part), part));
@@ -1266,7 +1266,8 @@ test('108. duplicate normalized foreman names with different ST-IDs fail safely'
 });
 test('109. object statuses are centralized and preserve approved spelling', () => {
   const statuses=Array.from(vm.runInContext('SYSTEM_CONFIG.VALUES.OBJECT_STATUSES',baseContext()));
-  assert.deepEqual(statuses,['На подготовке','Передан заказчику','Требует исправления','Подписан с обеих сторон']);
+  assert.deepEqual(statuses,['Действующий','Завершён','Отменён']);
+  for(const documentStatus of ['На подготовке','Передан заказчику','Требует исправления','Подписан с обеих сторон']) assert.ok(!statuses.includes(documentStatus));
 });
 test('110. object synchronization still carries foreman name, ST-ID and status', () => {
   const text=fs.readFileSync('SyncObjectData.gs','utf8');
@@ -1285,7 +1286,7 @@ test('112. foreman dropdown uses clean names only', () => {
   const ctx=baseContext({SpreadsheetApp:{flush(){},newDataValidation(){const rule={requireValueInList(values){rule.values=values;return rule},setAllowInvalid(){return rule},build(){return rule}};return rule}}});
   const rules=[]; const objects={config:{dataStartRow:3},sheet:{getMaxRows:()=>10,getRange:()=>({setDataValidation(rule){rules.push(rule)}}),hideColumns(){}}};
   ctx.assertSystemSheetsStructure_=()=>{}; ctx.getSystemSheetContext_=key=>key==='OBJECTS'?objects:{};
-  ctx.objectControlsForemen_=()=>[{id:'ST-16',name:'Иванов Иван Иванович'}]; ctx.objectControlsEnsureStatuses_=()=>['На подготовке'];
+  ctx.objectControlsForemen_=()=>[{id:'ST-16',name:'Иванов Иван Иванович'}]; ctx.objectControlsEnsureStatuses_=()=>['Действующий','Завершён','Отменён'];
   ctx.getSystemColumn_=(key,h)=>h==='Ответственный прораб'?6:h==='Статус объекта'?7:5;
   ctx.setupObjectSheetControls();
   assert.deepEqual(Array.from(rules[0].values),['Иванов Иван Иванович']);
@@ -1331,6 +1332,21 @@ test('116. object name is a normal read-only fact field', () => {
   const editable=partialSaveFixture(ctx,{card:{'Комментарий':'new'}});
   const accepted=ctx.operatorCardBuildSavePlan_([editable.card],[editable.fact],partialDictionaries(),new Date(),'x@x','OP-20260804-0002');
   assert.equal(accepted.rows.length,1);
+});
+
+test('117. creation accepts every object status and rejects an empty status', () => {
+  const ctx=baseContext();
+  const headers=['ID объекта','Название объекта','Адрес','Номер договора','ID ответственного прораба','Ответственный прораб','Статус объекта','Дата начала работ','Дата окончания (по плану)','Дата окончания (по факту)'];
+  const start=vm.runInContext("new Date('2026-08-01T00:00:00Z')",ctx);
+  const end=vm.runInContext("new Date('2026-08-31T00:00:00Z')",ctx);
+  const statuses=['Действующий','Завершён','Отменён','','На подготовке'];
+  const rows=statuses.map((status,index)=>['OBJ-'+index,'Объект '+index,'','DOG-'+index,'ST-1','Иванов',status,start,end,'']);
+  const context={headers,headerMap:Object.fromEntries(headers.map((h,i)=>[h,i+1])),config:{dataStartRow:3,requiredHeaders:headers},sheet:{getLastRow:()=>7,getRange:()=>({getValues:()=>rows})}};
+  ctx.getSystemSheetContext_=()=>context;
+  const result=ctx.readAndValidateCreationObjects_();
+  assert.deepEqual(Array.from(result.validObjects,item=>item.objectStatus),['Действующий','Завершён','Отменён']);
+  assert.equal(result.skippedObjects.length,2); assert.match(result.skippedObjects[0].reasons.join(' '),/не заполнено поле «Статус объекта»/);
+  assert.match(result.skippedObjects[1].reasons.join(' '),/недопустимое значение «На подготовке»/);
 });
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);

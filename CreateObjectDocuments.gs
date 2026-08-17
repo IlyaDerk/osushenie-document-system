@@ -351,6 +351,12 @@ function readAndValidateCreationObjects_() {
         duplicateIds[candidate.id].join(', ')
       );
     }
+    const objectStatus = candidate.row[indexes[H.OBJECT_STATUS]];
+    if (!creationValueIsEmpty_(objectStatus) && !SYSTEM_CONFIG.VALUES.OBJECT_STATUSES.some(function (status) {
+      return creationNormalizedValue_(status) === creationNormalizedValue_(objectStatus);
+    })) {
+      reasons.push('поле «' + H.OBJECT_STATUS + '» содержит недопустимое значение «' + objectStatus + '»');
+    }
     const start = candidate.row[indexes[H.WORK_START_DATE]];
     const plan = candidate.row[indexes[H.WORK_END_PLAN]];
     const fact = candidate.row[indexes[H.WORK_END_FACT]];
