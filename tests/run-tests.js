@@ -3,7 +3,7 @@ const assert = require('assert');
 const fs = require('fs');
 const vm = require('vm');
 const cp = require('child_process');
-const files = ['SystemCore.gs', 'CreateObjectDocuments.gs', 'SyncObjectData.gs', 'ArchiveChangeHistory.gs', 'OperatorCard.gs', 'OperatorCardSave.gs', 'Code.gs'];
+const files = ['SystemCore.gs', 'CreateObjectDocuments.gs', 'SyncObjectData.gs', 'ArchiveChangeHistory.gs', 'OperatorCard.gs', 'OperatorCardSave.gs', 'Code.gs', 'WebAppAuth.gs', 'DocumentWebApp.gs'];
 const source = files.map(f => fs.readFileSync(f, 'utf8')).join('\n');
 let passed = 0;
 function test(name, fn) {
@@ -29,6 +29,7 @@ function baseContext(extra = {}) {
         }
         return date.toISOString();
       },
+      getUuid() { return 'uuid-'; },
       parseDate(text, zone, pattern) {
         if (pattern !== 'dd.MM.yyyy') throw new Error('unexpected pattern');
         const [day, month, year] = text.split('.').map(Number);
@@ -51,7 +52,8 @@ function baseContext(extra = {}) {
     SpreadsheetApp: extra.SpreadsheetApp || { flush() {} },
     LockService: extra.LockService || {},
     Session: { getActiveUser() { return { getEmail() { return 'tester@example.com'; } }; } },
-    HtmlService: extra.HtmlService || {}
+    HtmlService: extra.HtmlService || {},
+    CacheService: extra.CacheService || { getScriptCache() { return { put() {}, get() { return null; }, remove() {} }; } }
   };
   vm.createContext(sandbox);
   vm.runInContext(source, sandbox);
@@ -1235,5 +1237,67 @@ test('104. a fact-write failure is fatal and never claims guaranteed save succes
   assert.equal(operationRow[operationHeaders.indexOf('Статус операции')],'Ошибка');
   assert.match(operationRow[operationHeaders.indexOf('Текст ошибки / комментарий')],/неопредел|Часть изменений могла быть записана/);
 });
+
+
+function webSimpleContext() {
+  const store = {};
+  let uuid = 0;
+  const ctx = baseContext({ CacheService: { getScriptCache() { return {
+    put(key, value) { store[key] = value; }, get(key) { return store[key] || null; }, remove(key) { delete store[key]; }
+  }; } } });
+  ctx.Utilities.getUuid = () => 'uuid-' + (++uuid);
+  ctx.assertSystemSheetsStructure_ = () => {};
+  return { ctx, store };
+}
+function webUsers(ctx, users) { ctx.webAppReadUsers_ = () => users; }
+test('105. valid web login creates a session without returning password', () => {
+  const {ctx}=webSimpleContext(); webUsers(ctx,[{login:'irina',password:'Secret',fullName:'Ирина',contact:'@irina',access:'Да'}]);
+  const result=ctx.webAppLogin(' irina ','Secret'); assert.equal(result.ok,true); assert.equal(result.user.actor,'@irina'); assert.equal('password' in result.user,false);
+});
+test('106. web password comparison is exact', () => { const {ctx}=webSimpleContext(); webUsers(ctx,[{login:'u',password:'Case',access:'Да'}]); assert.equal(ctx.webAppLogin('u','case').ok,false); });
+test('107. unknown web login is rejected', () => { const {ctx}=webSimpleContext(); webUsers(ctx,[]); assert.equal(ctx.webAppLogin('missing','x').ok,false); });
+test('108. disabled web user is rejected', () => { const {ctx}=webSimpleContext(); webUsers(ctx,[{login:'u',password:'x',access:'Нет'}]); assert.equal(ctx.webAppLogin('u','x').ok,false); });
+test('109. duplicate web login is blocked', () => { const {ctx}=webSimpleContext(); webUsers(ctx,[{login:'u',password:'x',access:'Да'},{login:'u',password:'x',access:'Да'}]); assert.match(ctx.webAppLogin('u','x').message,/повторяющийся логин/); });
+test('110. contact falls back to login for web actor', () => { const ctx=baseContext(); assert.equal(ctx.webAppPublicUser_({login:'ilya',fullName:'Илья',contact:''}).actor,'ilya'); });
+test('111. session expiry is explicit', () => { const {ctx}=webSimpleContext(); assert.throws(()=>ctx.webAppRequireSession_('gone'),/Сессия истекла/); });
+test('112. All pseudo-object is excluded', () => {
+  const ctx=baseContext(); const headers=['ID объекта','Название','Номер договора','Статус объекта','Дата начала работ','Дата окончания (по плану)','Дата окончания (по факту)','Ответственный прораб','ID ответственного прораба'];
+  ctx.getSystemSheetContext_=()=>({headers,headerMap:Object.fromEntries(headers.map((h,i)=>[h,i+1])),config:{dataStartRow:4},sheet:{getLastRow:()=>5,getRange:()=>({getValues:()=>[['Все','Все'],['15','Дом']]})}});
+  assert.deepEqual(Array.from(ctx.webAppReadObjects_(),x=>x.id),['15']);
+});
+test('113. all valid document types are loaded and repeatability normalized', () => {
+  const ctx=baseContext(); const headers=['ID типа документа','Тип документа','Повторяемость'];
+  ctx.getSystemSheetContext_=()=>({headers,headerMap:Object.fromEntries(headers.map((h,i)=>[h,i+1])),config:{dataStartRow:5},sheet:{getLastRow:()=>6,getRange:()=>({getValues:()=>[['T1','Акт',' один '],['T2','КС','МНОГО']]})}});
+  assert.deepEqual(Array.from(ctx.webAppReadDocumentTypes_(),x=>x.repeatability),['Один','Много']);
+});
+test('114. unknown repeatability blocks loading', () => {
+  const ctx=baseContext(); const headers=['ID типа документа','Тип документа','Повторяемость'];
+  ctx.getSystemSheetContext_=()=>({headers,headerMap:Object.fromEntries(headers.map((h,i)=>[h,i+1])),config:{dataStartRow:5},sheet:{getLastRow:()=>5,getRange:()=>({getValues:()=>[['T1','Акт','Иногда']]})}});
+  assert.throws(()=>ctx.webAppReadDocumentTypes_(),/некорректно настроена повторяемость/);
+});
+test('115. statuses are read from card dictionary and de-duplicated', () => {
+  const ctx=baseContext(); const headers=['Статус документа']; ctx.getSystemSheetContext_=()=>({headers,headerMap:{'Статус документа':1},config:{dataStartRow:3},sheet:{getLastRow:()=>6,getRange:()=>({getValues:()=>[['Новый'],[''],['Готов'],['Новый']]})}});
+  assert.deepEqual(Array.from(ctx.webAppReadStatuses_()),['Новый','Готов']);
+});
+test('116. unique lookup rejects missing and duplicate client IDs', () => { const ctx=baseContext(); assert.throws(()=>ctx.webAppFindUnique_([{id:'1'},{id:'1'}],'1','объекта'),/дублирующийся/); assert.throws(()=>ctx.webAppFindUnique_([],'x','объекта'),/Не найдены/); });
+test('117. repeated document numbering counts archived and deleted rows', () => { const ctx=baseContext(); const name='КС №'+([{recordStatus:'Архивная'},{recordStatus:'Удалённая'}].length+1); assert.equal(name,'КС №3'); });
+test('118. web document values preserve base type ID and number only the name', () => { const ctx=baseContext(); const values=ctx.webAppDocumentValues_({id:'15'}, {id:'T2'}, 'КС №2','Готов','DOC-15-0004','@u',new Date()); assert.equal(values['ID типа документа'],'T2'); assert.equal(values['Тип документа'],'КС №2'); });
+test('119. one-time document name receives no number', () => { const ctx=baseContext(); const type={name:'Акт',repeatability:'Один'}; const actual=type.repeatability==='Много'?type.name+' №1':type.name; assert.equal(actual,'Акт'); });
+test('120. web facts use active status, source, actor and Date system fields', () => { const ctx=baseContext(); const now=new Date(); const values=ctx.webAppDocumentValues_({id:'15',contractNumber:'C',objectStatus:'Работа'}, {id:'T'}, 'Акт','Готов','DOC-15-0001','@u',now); assert.equal(values['Статус записи'],'Активная'); assert.equal(values['Источник создания'],'Web-приложение'); assert.equal(values['Кто обновил (email)'],'@u'); assert.ok(values['Дата создания'] instanceof Date); assert.equal(values['Дата создания'],values['Дата обновления']); assert.equal(values['Дата изменения статуса документа'],now); });
+test('121. unspecified business fields remain absent and therefore blank in a fact row', () => { const ctx=baseContext(); const v=ctx.webAppDocumentValues_({id:'1'},{id:'T'},'А','С','DOC-1-0001','u',new Date()); for(const h of ['Комментарий','Сумма документа','Отчётный период','Дата документа']) assert.equal(v[h],undefined); });
+test('122. DOC generation keeps format and never reuses an existing number', () => { const ctx=baseContext(); assert.equal(ctx.webAppNextDocumentId_('15',{'DOC-15-0001':[4],'DOC-15-0003':[8]}),'DOC-15-0004'); });
+test('123. sequential DOC generation sees the preceding write', () => { const ctx=baseContext(); const ids={}; const first=ctx.webAppNextDocumentId_('9',ids); ids[first]=[4]; const second=ctx.webAppNextDocumentId_('9',ids); assert.deepEqual([first,second],['DOC-9-0001','DOC-9-0002']); });
+test('124. server create is enclosed by the shared document lock', () => { const text=fs.readFileSync('DocumentWebApp.gs','utf8'); assert.match(text,/webAppCreateDocument[\s\S]*withDocumentLock_\(function/); });
+test('125. server re-reads object, type, statuses and documents under lock', () => { const text=fs.readFileSync('DocumentWebApp.gs','utf8'); const start=text.indexOf('function webAppCreateDocumentUnderLock_'); const body=text.slice(start); for(const fn of ['webAppReadObjects_','webAppReadDocumentTypes_','webAppReadStatuses_','webAppReadMatchingDocuments_']) assert.ok(body.indexOf(fn)>=0); });
+test('126. blocked One writes no fact and records no-changes operation', () => { const text=fs.readFileSync('DocumentWebApp.gs','utf8'); const block=text.slice(text.indexOf("type.repeatability === 'Один'"),text.indexOf("const documentsContext")); assert.match(block,/OPERATION_STATUS_NO_CHANGES/); assert.doesNotMatch(block,/setValues\(\[row\]\)/); });
+test('127. one fact write, one change write and one operation write are explicit', () => { const text=fs.readFileSync('DocumentWebApp.gs','utf8'); assert.match(text,/webAppWriteChange_\(operationId/); assert.match(text,/webAppWriteOperation_\(\{/); assert.doesNotMatch(text,/appendRow\s*\(/); });
+test('128. web operation counters match creation contract', () => { const text=fs.readFileSync('DocumentWebApp.gs','utf8'); for(const fragment of ['values[H.DOCUMENTS_LOADED] = 0','values[H.DOCUMENTS_CHANGED] = operation.created','values[H.FIELDS_CHANGED] = operation.created','values[H.DUPLICATE_IDS_FOUND] = 0']) assert.match(text,new RegExp(fragment.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'))); });
+test('129. web history uses shared IDs and the same operation ID', () => { const text=fs.readFileSync('DocumentWebApp.gs','utf8'); assert.match(text,/generateOperationId_\(startedAt\)/); assert.match(text,/generateChangeId_\(operationId, 1\)/); });
+test('130. partial history failure returns uncertain result', () => { const ctx=baseContext(); const response=ctx.webAppFailureResponse_(new Error('history'),true); assert.equal(response.uncertain,true); assert.match(response.message,/мог быть создан/); });
+test('131. HTML stores the token in sessionStorage and never uses innerHTML', () => { const html=fs.readFileSync('DocumentWebApp.html','utf8'); assert.match(html,/sessionStorage/); assert.doesNotMatch(html,/innerHTML/); });
+test('132. HTML sends only the three allowed payload fields', () => { const html=fs.readFileSync('DocumentWebApp.html','utf8'); assert.match(html,/\{objectId:byId\('object'\)\.value,documentTypeId:byId\('documentType'\)\.value,documentStatus:byId\('documentStatus'\)\.value\}/); });
+test('133. HTML blocks duplicate submission while busy', () => { const html=fs.readFileSync('DocumentWebApp.html','utf8'); assert.match(html,/if\(byId\('createButton'\)\.disabled\)return/); assert.match(html,/setBusy\(true\)/); });
+test('134. Code remains free of the web entry point', () => { assert.doesNotMatch(fs.readFileSync('Code.gs','utf8'),/doGet|webAppCreateDocument/); });
+test('135. web source is centralized in SystemCore', () => { assert.match(fs.readFileSync('SystemCore.gs','utf8'),/WEB_APP_SOURCE: 'Web-приложение'/); assert.doesNotMatch(fs.readFileSync('WebAppAuth.gs','utf8'),/password:\s*['"][^'"]+['"]/); });
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <base target="_top">
+  <style>
+    :root{font-family:Arial,sans-serif;color:#17202a;background:#f4f7f9}*{box-sizing:border-box}
+    body{margin:0;padding:18px}.card{max-width:560px;margin:auto;background:#fff;border-radius:14px;padding:22px;box-shadow:0 4px 18px #17202a18}
+    h1{font-size:24px;margin:0 0 22px}h2{font-size:18px;margin:20px 0 10px}label{display:block;font-weight:700;margin:15px 0 7px}
+    input,select,button{width:100%;min-height:48px;border-radius:9px;font-size:16px}input,select{padding:10px;border:1px solid #b9c5ce;background:#fff}
+    button{margin-top:18px;border:0;background:#1769aa;color:#fff;font-weight:700;padding:10px;cursor:pointer}button:disabled{background:#aab5bd;cursor:not-allowed}
+    .secondary{width:auto;min-height:38px;margin:0;background:#64727d;padding:7px 14px}.hidden{display:none}.message{white-space:pre-line;border-radius:9px;padding:12px;margin:14px 0}
+    .error{background:#fde8e7;color:#8e211b}.success{background:#e3f4e8;color:#1c6935}.warning{background:#fff1cc;color:#704f00}.muted{color:#64727d;font-size:14px}
+    .document{border:1px solid #d9e1e6;border-radius:9px;padding:11px;margin:8px 0}.document strong,.document span{display:block;margin:3px 0}
+    .account{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:22px}.busy{opacity:.65;pointer-events:none}
+  </style>
+</head>
+<body><main class="card">
+  <section id="loginView">
+    <h1>Документы — Осушение</h1>
+    <form id="loginForm">
+      <label for="login">Логин</label><input id="login" autocomplete="username" required>
+      <label for="password">Пароль</label><input id="password" type="password" autocomplete="current-password" required>
+      <button id="loginButton" type="submit">Войти</button>
+    </form><div id="loginMessage" aria-live="polite"></div>
+  </section>
+  <section id="appView" class="hidden">
+    <h1>Создание документа</h1><div id="result" aria-live="polite"></div>
+    <form id="createForm">
+      <label for="object">Объект</label><select id="object" required></select>
+      <label for="documentType">Тип документа</label><select id="documentType" required></select>
+      <section id="existingBlock" class="hidden"><h2>Уже существующие документы</h2><div id="repeatabilityMessage"></div><div id="documents"></div></section>
+      <label for="documentStatus">Статус документа</label><select id="documentStatus" required></select>
+      <button id="createButton" type="submit" disabled>Создать документ</button>
+    </form>
+    <div class="account"><span id="userName" class="muted"></span><button id="logout" class="secondary" type="button">Выйти</button></div>
+  </section>
+</main>
+<script>
+  'use strict';
+  const TOKEN_KEY='osushenieDocumentWebSession';
+  const state={token:sessionStorage.getItem(TOKEN_KEY)||'',busy:false,canCreate:false};
+  const byId=id=>document.getElementById(id);
+  const call=(name,...args)=>new Promise((resolve,reject)=>google.script.run.withSuccessHandler(resolve).withFailureHandler(()=>reject(new Error('Сервер временно недоступен.')))[name](...args));
+  function message(target,text,kind){target.textContent=text||'';target.className=text?'message '+kind:''}
+  function setBusy(value){state.busy=value;byId('appView').classList.toggle('busy',value);byId('loginButton').disabled=value;updateButton()}
+  function option(select,value,text){const item=document.createElement('option');item.value=value;item.textContent=text;select.appendChild(item)}
+  function fill(select,items,label,valueKey,textKey){select.textContent='';option(select,'',label);items.forEach(item=>option(select,item[valueKey],item[textKey]))}
+  function updateButton(){byId('createButton').disabled=state.busy||!state.canCreate||!byId('object').value||!byId('documentType').value||!byId('documentStatus').value}
+  function expire(text){sessionStorage.removeItem(TOKEN_KEY);state.token='';byId('appView').classList.add('hidden');byId('loginView').classList.remove('hidden');message(byId('loginMessage'),text||'Сессия истекла. Войдите снова.','error')}
+  function handle(response){if(response&&response.sessionExpired){expire(response.message);return false}return true}
+  async function bootstrap(user){setBusy(true);try{const r=await call('webAppGetBootstrap',state.token);if(!handle(r)||!r.ok)throw new Error(r.message);fill(byId('object'),r.objects,'Выберите объект','id','name');fill(byId('documentType'),r.documentTypes,'Выберите тип документа','id','name');byId('documentStatus').textContent='';option(byId('documentStatus'),'','Выберите статус');r.documentStatuses.forEach(x=>option(byId('documentStatus'),x,x));byId('userName').textContent='Вошёл: '+(user.fullName||user.login);byId('loginView').classList.add('hidden');byId('appView').classList.remove('hidden');state.canCreate=false}catch(e){expire(e.message)}finally{setBusy(false)}}
+  byId('loginForm').addEventListener('submit',async event=>{event.preventDefault();setBusy(true);message(byId('loginMessage'),'Выполняется вход…','warning');try{const r=await call('webAppLogin',byId('login').value,byId('password').value);byId('password').value='';if(!r.ok){message(byId('loginMessage'),r.message,'error');return}state.token=r.sessionToken;sessionStorage.setItem(TOKEN_KEY,state.token);message(byId('loginMessage'),'','');await bootstrap(r.user)}catch(e){message(byId('loginMessage'),e.message,'error')}finally{setBusy(false)}});
+  async function refreshExisting(){byId('documents').textContent='';byId('repeatabilityMessage').textContent='';byId('existingBlock').classList.add('hidden');state.canCreate=false;updateButton();if(!byId('object').value||!byId('documentType').value)return;setBusy(true);try{const r=await call('webAppGetExistingDocuments',state.token,byId('object').value,byId('documentType').value);if(!handle(r))return;if(!r.ok)throw new Error(r.message);byId('existingBlock').classList.remove('hidden');state.canCreate=r.canCreate;if(!r.canCreate)message(byId('repeatabilityMessage'),'Документ этого типа уже существует.\nПовторяемость типа документа — «Один», поэтому создать второй документ нельзя.','warning');else if(r.documentType.repeatability==='Много')message(byId('repeatabilityMessage'),'Следующий документ: '+r.nextDocumentName,'success');if(!r.documents.length){const empty=document.createElement('p');empty.className='muted';empty.textContent='Документы этого типа ещё не создавались.';byId('documents').appendChild(empty)}r.documents.forEach(doc=>{const card=document.createElement('div');card.className='document';[doc.name,'ID: '+doc.id,'Статус документа: '+doc.status,'Статус записи: '+doc.recordStatus].forEach((text,index)=>{const line=document.createElement(index?'span':'strong');line.textContent=text;card.appendChild(line)});byId('documents').appendChild(card)})}catch(e){message(byId('result'),e.message,'error')}finally{setBusy(false)}}
+  byId('object').addEventListener('change',refreshExisting);byId('documentType').addEventListener('change',refreshExisting);byId('documentStatus').addEventListener('change',updateButton);
+  byId('createForm').addEventListener('submit',async event=>{event.preventDefault();if(byId('createButton').disabled)return;setBusy(true);message(byId('result'),'Создаём документ…','warning');try{const r=await call('webAppCreateDocument',state.token,{objectId:byId('object').value,documentTypeId:byId('documentType').value,documentStatus:byId('documentStatus').value});if(!handle(r))return;if(!r.ok){message(byId('result'),r.message,r.businessBlocked?'warning':'error');if(r.businessBlocked){state.canCreate=false;updateButton()}return}const d=r.document;message(byId('result'),'Документ создан\n\nОбъект: '+d.objectName+'\nДокумент: '+d.name+'\nСтатус: '+d.status+'\nID: '+d.id,'success');byId('createForm').reset();byId('documents').textContent='';byId('existingBlock').classList.add('hidden');state.canCreate=false;updateButton()}catch(e){message(byId('result'),e.message,'error')}finally{setBusy(false)}});
+  byId('logout').addEventListener('click',async()=>{const token=state.token;expire('');try{await call('webAppLogout',token)}catch(e){/* Client session is already cleared. */}});
+  (async()=>{if(!state.token)return;try{const r=await call('webAppResumeSession',state.token);if(r.ok)await bootstrap(r.user);else expire(r.message)}catch(e){expire(e.message)}})();
+</script></body></html>
