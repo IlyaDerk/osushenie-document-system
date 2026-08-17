@@ -1295,7 +1295,7 @@ test('112. foreman dropdown uses clean names only', () => {
 test('113. onEdit preserves clean FIO, writes ST-ID, and clearing FIO clears ID', () => {
   const ctx=baseContext(); let fio=''; let id='OLD'; let note='';
   const idCell={setValue(v){id=v;return this},clearContent(){id='';return this}};
-  const sheet={getSheetId:()=>10,getRange:()=>idCell};
+  const sheet={getName:()=>'Объекты',getSheetId:()=>10,getRange:()=>idCell};
   const range={getNumRows:()=>1,getNumColumns:()=>1,getSheet:()=>sheet,getRow:()=>3,getColumn:()=>6,setValue(v){fio=v;return this},setNote(v){note=v;return this},clearContent(){fio='';return this}};
   ctx.getSystemSheetContext_=()=>({config:{dataStartRow:3},sheet});
   ctx.getSystemColumn_=(key,h)=>h==='Ответственный прораб'?6:5;
@@ -1347,6 +1347,68 @@ test('117. creation accepts every object status and rejects an empty status', ()
   assert.deepEqual(Array.from(result.validObjects,item=>item.objectStatus),['Действующий','Завершён','Отменён']);
   assert.equal(result.skippedObjects.length,2); assert.match(result.skippedObjects[0].reasons.join(' '),/не заполнено поле «Статус объекта»/);
   assert.match(result.skippedObjects[1].reasons.join(' '),/недопустимое значение «На подготовке»/);
+});
+
+function readOnlyGuardFixture(editColumn, editWidth, mutate) {
+  const ctx=baseContext();
+  const cardHeaders=operatorWorkflowCardHeaders.slice();
+  const factHeaders=operatorWorkflowDocumentHeaders.slice();
+  const card=['DOC-1','OBJ-1','Объект А','Акт','DOG-1','', 'Новый','Оригинал','old','', 'Офис','', 'Нет','', 'Нет','', 'Действующий','','','','created','v1','TYPE-1','old@example.com','Иванов','Активная',4];
+  const fact=card.slice(0,25).concat(['','','ST-1','','','','Активная']);
+  if (mutate) mutate(card);
+  const notes={}; let cardReads=0,factReads=0;
+  const cardSheet={getName:()=> 'Карточка операциониста',getSheetId:()=>20,getRange(row,column,rowCount,columnCount){
+    if (rowCount!==undefined) { cardReads++; return {getValues:()=>[card.slice(column-1,column-1+columnCount)]}; }
+    return {setValue(value){card[column-1]=value;return this},setNote(value){notes[column]=value;return this}};
+  }};
+  const factSheet={getLastRow:()=>4,getRange(row,column,rowCount,columnCount){factReads++;return {getValues:()=>[fact.slice()]}}};
+  const cardContext={config:{dataStartRow:6,requiredHeaders:cardHeaders},headers:cardHeaders,headerMap:Object.fromEntries(cardHeaders.map((h,i)=>[h,i+1])),sheet:cardSheet};
+  const factContext={config:{dataStartRow:4},headers:factHeaders,headerMap:Object.fromEntries(factHeaders.map((h,i)=>[h,i+1])),sheet:factSheet};
+  ctx.getSystemSheetContext_=key=>key==='OPERATOR_CARD'?cardContext:factContext;
+  const range={getSheet:()=>cardSheet,getRow:()=>6,getNumRows:()=>1,getColumn:()=>editColumn,getNumColumns:()=>editWidth};
+  return {ctx,card,fact,notes,range,reads:()=>({cardReads,factReads})};
+}
+test('118. project has exactly one global onEdit router', () => {
+  const count=files.reduce((sum,file)=>sum+(fs.readFileSync(file,'utf8').match(/function\s+onEdit\s*\(/g)||[]).length,0);
+  assert.equal(count,1); const text=fs.readFileSync('ObjectSheetControls.gs','utf8');
+  assert.match(text,/objectControlsHandleEdit_\(event\)/); assert.match(text,/operatorCardHandleReadOnlyEdit_\(event\)/);
+});
+test('119. card guard restores object name, contract and object date from physical fact row', () => {
+  for(const [header,bad] of [['Название объекта','ТЕСТ'],['Номер договора','BAD'],['Дата окончания (по плану)','BAD DATE']]) {
+    const column=operatorWorkflowCardHeaders.indexOf(header)+1;
+    const fixture=readOnlyGuardFixture(column,1,card=>{card[column-1]=bad}); const expected=fixture.fact[column-1];
+    fixture.ctx.operatorCardHandleReadOnlyEdit_({range:fixture.range});
+    assert.equal(fixture.card[column-1],expected,header); assert.match(fixture.notes[column],/недоступно для ручного изменения/);
+    assert.deepEqual(fixture.reads(),{cardReads:1,factReads:1});
+  }
+});
+test('120. card guard ignores editable comment and document status', () => {
+  for(const header of ['Комментарий','Статус документа']) {
+    const column=operatorWorkflowCardHeaders.indexOf(header)+1;
+    const fixture=readOnlyGuardFixture(column,1,card=>{card[column-1]='USER VALUE'});
+    fixture.ctx.operatorCardHandleReadOnlyEdit_({range:fixture.range});
+    assert.equal(fixture.card[column-1],'USER VALUE'); assert.deepEqual(fixture.reads(),{cardReads:0,factReads:0});
+  }
+});
+test('121. mixed paste restores only read-only cells and preserves editable cells', () => {
+  const first=3,width=7;
+  const fixture=readOnlyGuardFixture(first,width,card=>{
+    for(let i=first-1;i<first-1+width;i++) card[i]='PASTE-'+i;
+    card[0]='DOC-1'; card[1]='OBJ-1'; card[22]='TYPE-1';
+  });
+  fixture.ctx.operatorCardHandleReadOnlyEdit_({range:fixture.range});
+  for(const header of ['Название объекта','Тип документа','Номер договора']) {
+    const index=operatorWorkflowCardHeaders.indexOf(header); assert.equal(fixture.card[index],fixture.fact[index],header);
+  }
+  for(const header of ['Дата документа','Статус документа','Оригинал / ЭДО','Комментарий']) {
+    const index=operatorWorkflowCardHeaders.indexOf(header); assert.equal(fixture.card[index],'PASTE-'+index,header);
+  }
+});
+test('122. identity mismatch never restores from another physical fact row', () => {
+  const column=operatorWorkflowCardHeaders.indexOf('Название объекта')+1;
+  const fixture=readOnlyGuardFixture(column,1,card=>{card[1]='OTHER-OBJECT';card[column-1]='ТЕСТ'});
+  fixture.ctx.operatorCardHandleReadOnlyEdit_({range:fixture.range});
+  assert.equal(fixture.card[column-1],'ТЕСТ'); assert.match(fixture.notes[column],/identity/);
 });
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);

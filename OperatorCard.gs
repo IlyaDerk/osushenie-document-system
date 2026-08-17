@@ -331,6 +331,69 @@ function operatorCardReplace_(cardContext, newRows) {
   }
 }
 
+/** Restores manually edited read-only card cells from their physical fact rows. */
+function operatorCardHandleReadOnlyEdit_(event) {
+  if (!event || !event.range ||
+      event.range.getSheet().getName() !== SYSTEM_CONFIG.SHEETS.OPERATOR_CARD.name) return;
+  const card = getSystemSheetContext_('OPERATOR_CARD');
+  const edit = event.range;
+  const firstRow = Math.max(edit.getRow(), card.config.dataStartRow);
+  const lastRow = edit.getRow() + edit.getNumRows() - 1;
+  if (lastRow < firstRow) return;
+  const firstColumn = edit.getColumn();
+  const lastColumn = firstColumn + edit.getNumColumns() - 1;
+  const readOnlyMappings = SYSTEM_CONFIG.CARD_FIELD_MAP.filter(function (mapping) {
+    if (mapping.editable !== false) return false;
+    const column = card.headerMap[sysNormalizeHeader_(mapping.cardHeader)];
+    return column >= firstColumn && column <= lastColumn;
+  });
+  if (!readOnlyMappings.length) return;
+
+  const cardStartColumn = card.headerMap[sysNormalizeHeader_(H.DOCUMENT_ID)];
+  const cardWidth = card.config.requiredHeaders.length;
+  const cardRows = card.sheet.getRange(firstRow, cardStartColumn, lastRow - firstRow + 1, cardWidth).getValues();
+  const rowColumn = card.headerMap[sysNormalizeHeader_(H.FACT_ROW_NUMBER)] - cardStartColumn;
+  const documents = getSystemSheetContext_('DOCUMENTS');
+  const factRows = cardRows.map(function (row) { return Number(row[rowColumn]); });
+  const validFactRows = factRows.filter(function (row) {
+    return Number.isInteger(row) && row >= documents.config.dataStartRow && row <= documents.sheet.getLastRow();
+  });
+  const minFactRow = validFactRows.length ? Math.min.apply(null, validFactRows) : 0;
+  const maxFactRow = validFactRows.length ? Math.max.apply(null, validFactRows) : -1;
+  const factValues = validFactRows.length ? documents.sheet.getRange(
+    minFactRow, 1, maxFactRow - minFactRow + 1, documents.headers.length
+  ).getValues() : [];
+  const identityHeaders = [H.DOCUMENT_ID, H.OBJECT_ID, H.DOCUMENT_TYPE_ID];
+  const automaticNote = 'Поле заполняется автоматически и недоступно для ручного изменения.';
+  const unsafeNote = 'Не удалось безопасно восстановить поле: неверная физическая строка или identity документа. Обновите карточку.';
+
+  cardRows.forEach(function (cardRow, offset) {
+    const sheetRow = firstRow + offset;
+    const factRow = factRows[offset];
+    const affectedHeaders = {};
+    readOnlyMappings.forEach(function (mapping) { affectedHeaders[mapping.cardHeader] = true; });
+    const fact = Number.isInteger(factRow) && factRow >= minFactRow && factRow <= maxFactRow
+      ? factValues[factRow - minFactRow] : null;
+    const identityMatches = !!fact && identityHeaders.every(function (header) {
+      if (affectedHeaders[header]) return true;
+      const cardIndex = card.headerMap[sysNormalizeHeader_(header)] - cardStartColumn;
+      const factIndex = documents.headerMap[sysNormalizeHeader_(header)] - 1;
+      return operatorCardNormalizeText_(cardRow[cardIndex]) === operatorCardNormalizeText_(fact[factIndex]);
+    });
+    const hasIdentityAnchor = identityHeaders.some(function (header) { return !affectedHeaders[header]; });
+    readOnlyMappings.forEach(function (mapping) {
+      const column = card.headerMap[sysNormalizeHeader_(mapping.cardHeader)];
+      const cell = card.sheet.getRange(sheetRow, column);
+      if (!identityMatches || !hasIdentityAnchor || !mapping.factHeader) {
+        cell.setNote(unsafeNote);
+        return;
+      }
+      const factIndex = documents.headerMap[sysNormalizeHeader_(mapping.factHeader)] - 1;
+      cell.setValue(fact[factIndex]).setNote(automaticNote);
+    });
+  });
+}
+
 function operatorCardComment_(filters, result, criticalError) {
   const parts = [
     'Объект: ' + (filters.object.allObjects ? 'Все' : (filters.object.objectName || filters.object.objectId)),

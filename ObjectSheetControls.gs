@@ -87,9 +87,10 @@ function setupObjectSheetControls() {
   return { foremen: foremen.length, statuses: statuses.length };
 }
 
-/** Simple edit trigger: stores clean FIO and its unambiguous ST-ID after dropdown selection. */
-function onEdit(event) {
+/** Handles the Objects-sheet branch of the shared edit router. */
+function objectControlsHandleEdit_(event) {
   if (!event || !event.range || event.range.getNumRows() !== 1 || event.range.getNumColumns() !== 1) return;
+  if (event.range.getSheet().getName() !== SYSTEM_CONFIG.SHEETS.OBJECTS.name) return;
   const objects = getSystemSheetContext_('OBJECTS');
   if (event.range.getSheet().getSheetId() !== objects.sheet.getSheetId() ||
       event.range.getRow() < objects.config.dataStartRow ||
@@ -108,4 +109,10 @@ function onEdit(event) {
   }
   event.range.setValue(employee.name).setNote('ST-ID определён автоматически: ' + employee.id);
   idCell.setValue(employee.id);
+}
+
+/** The single project-wide simple edit trigger. Programmatic writes do not fire it. */
+function onEdit(event) {
+  objectControlsHandleEdit_(event);
+  operatorCardHandleReadOnlyEdit_(event);
 }
