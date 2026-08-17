@@ -3,7 +3,7 @@ const assert = require('assert');
 const fs = require('fs');
 const vm = require('vm');
 const cp = require('child_process');
-const files = ['SystemCore.gs', 'CreateObjectDocuments.gs', 'SyncObjectData.gs', 'ArchiveChangeHistory.gs', 'OperatorCard.gs', 'OperatorCardSave.gs', 'Code.gs'];
+const files = ['SystemCore.gs', 'CreateObjectDocuments.gs', 'SyncObjectData.gs', 'ArchiveChangeHistory.gs', 'OperatorCard.gs', 'OperatorCardSave.gs', 'ObjectSheetControls.gs', 'Code.gs'];
 const source = files.map(f => fs.readFileSync(f, 'utf8')).join('\n');
 let passed = 0;
 function test(name, fn) {
@@ -110,7 +110,7 @@ function syncFixture(sourceValues, docs) {
   const ctx = baseContext();
   ctx.getSystemSpreadsheet_ = () => ({ getSpreadsheetTimeZone: () => 'UTC' });
   const headers = [
-    'ID документа', 'ID объекта', 'Статус записи', 'Номер договора', 'Статус объекта',
+    'ID документа', 'ID объекта', 'Название объекта', 'Статус записи', 'Номер договора', 'Статус объекта',
     'Дата начала работ', 'Дата окончания (по плану)', 'Дата окончания (по факту)',
     'Ответственный прораб', 'ID ответственного прораба', 'Дата обновления', 'Кто обновил (email)',
     'Дата изменения статуса документа'
@@ -132,7 +132,7 @@ function syncFixture(sourceValues, docs) {
   return { ctx, result, headers };
 }
 const baseline = {
-  'Номер договора': 'A-1', 'Статус объекта': 'В работе',
+  'Название объекта': 'Объект Альфа', 'Номер договора': 'A-1', 'Статус объекта': 'В работе',
   'Дата начала работ': '',
   'Дата окончания (по плану)': '',
   'Дата окончания (по факту)': '', 'Ответственный прораб': 'Иванов',
@@ -326,7 +326,7 @@ function creationPrepareFixture(count) {
   const ctx = baseContext();
   ctx.getSystemSpreadsheet_ = () => ({ getSpreadsheetTimeZone: () => 'UTC' });
   const headers = [
-    'ID документа','ID объекта','Тип документа','ID типа документа','Номер договора','Статус документа',
+    'ID документа','ID объекта','Название объекта','Тип документа','ID типа документа','Номер договора','Статус документа',
     'Статус объекта','Дата начала работ','Дата окончания (по плану)','Дата окончания (по факту)',
     'Дата создания','Дата обновления','Кто обновил (email)','Ответственный прораб','ID ответственного прораба',
     'Дата изменения статуса документа','Источник создания','Статус записи'
@@ -334,8 +334,8 @@ function creationPrepareFixture(count) {
   const context = { headers, headerMap: Object.fromEntries(headers.map((h, i) => [h, i + 1])) };
   const missing = Array.from({ length: count }, (_, i) => ({
     object: {
-      id: 'OBJ' + String(i + 1).padStart(2, '0'), contractNumber: 'DOG-' + (i + 1),
-      objectStatus: 'В работе', workStartDate: new Date('2026-08-01T00:00:00Z'),
+      id: 'OBJ' + String(i + 1).padStart(2, '0'), name: 'Объект ' + (i + 1), contractNumber: 'DOG-' + (i + 1),
+      objectStatus: 'Действующий', workStartDate: new Date('2026-08-01T00:00:00Z'),
       workEndPlan: new Date('2026-08-31T00:00:00Z'), workEndFact: i === 0 ? new Date('2026-08-20T00:00:00Z') : '',
       responsibleForeman: 'Иванов', responsibleForemanId: 'ST-1'
     },
@@ -358,8 +358,8 @@ test('24. 18 created documents produce 18 history rows, not field-per-value rows
 });
 test('25. initial creation snapshot contains main nonempty fields', () => {
   const snapshot = creationPrepareFixture(1).changeRows[0].newValue;
-  ['ID документа: DOC-OBJ01-0001','ID объекта: OBJ01','Тип документа: Акт','ID типа документа: DT-1',
-   'Номер договора: DOG-1','Статус документа: Ожидает заполнения','Статус объекта: В работе',
+  ['ID документа: DOC-OBJ01-0001','ID объекта: OBJ01','Название объекта: Объект 1','Тип документа: Акт','ID типа документа: DT-1',
+   'Номер договора: DOG-1','Статус документа: Ожидает заполнения','Статус объекта: Действующий',
    'Дата начала работ:','Дата окончания (по плану):','Дата окончания (по факту):',
    'Ответственный прораб: Иванов','ID ответственного прораба: ST-1','Источник создания: Создание документов по объекту',
    'Статус записи: Активная'].forEach(part => assert.ok(snapshot.includes(part), part));
@@ -653,16 +653,16 @@ test('53. unknown IDs are rejected by server validation', () => {
 });
 test('54. header contract accepts extra fact columns but rejects reordering', () => {
   const ctx = baseContext();
-  const headers24 = ['ID документа','ID объекта','Тип документа','Номер договора','Дата документа','Статус документа','Оригинал / ЭДО','Комментарий','У кого документ','Где документ','Кто передал','Оплачен','Сумма документа','ГУ (Да/Нет)','Условия ГУ','Статус объекта','Дата начала работ','Дата окончания (по плану)','Дата окончания (по факту)','Дата создания','Дата обновления','ID типа документа','Кто обновил (email)','Ответственный прораб']; const headers=headers24.concat(['Статус записи','Номер строки в таблице фактов']);
+  const headers24 = ['ID документа','ID объекта','Название объекта','Тип документа','Номер договора','Дата документа','Статус документа','Оригинал / ЭДО','Комментарий','У кого документ','Где документ','Кто передал','Оплачен','Сумма документа','ГУ (Да/Нет)','Условия ГУ','Статус объекта','Дата начала работ','Дата окончания (по плану)','Дата окончания (по факту)','Дата создания','Дата обновления','ID типа документа','Кто обновил (email)','Ответственный прораб']; const headers=headers24.concat(['Статус записи','Номер строки в таблице фактов']);
   assert.equal(ctx.operatorCardValidateHeaders_(headers.concat(['extra']), headers, 'Документы объектов', 'Карточка'), true);
   const swapped = headers.slice(); [swapped[0], swapped[1]] = [swapped[1], swapped[0]];
   assert.throws(() => ctx.operatorCardValidateHeaders_(swapped, headers, 'Документы объектов', 'Карточка'), /позиция 2/);
-  assert.throws(() => ctx.operatorCardValidateHeaders_(headers24.concat(['Техническое поле']), headers.concat(['Лишний заголовок']), 'Документы объектов', 'Карточка'), /позиция 25|колонка 27/);
+  assert.throws(() => ctx.operatorCardValidateHeaders_(headers24.concat(['Техническое поле']), headers.concat(['Лишний заголовок']), 'Документы объектов', 'Карточка'), /позиция 25|колонка 28/);
   assert.equal(ctx.operatorCardValidateHeaders_(headers24.concat(['Техническое поле']), headers, 'Документы объектов', 'Карточка'), true);
 });
 test('55. active rows, combined ID filters and normalized status are applied', () => {
   const ctx = baseContext();
-  const indexes = { documentId:0, objectId:1, documentTypeId:2, documentStatus:3, holderId:4, foremanId:5, createdAt:6, recordStatus:7,transferredById:30 };
+  const indexes = { documentId:0, objectId:1, documentTypeId:2, documentStatus:3, holderId:4, foremanId:5, createdAt:6, recordStatus:7,transferredById:30,documentHolder:9,transferredBy:11 };
   const rows = [
     ['DOC-2','2','T1',' ГОТОВ ','E1','F1','', ' Активная '],
     ['DOC-3','2','T1','готов','E1','F1','', 'Архивная'],
@@ -670,16 +670,16 @@ test('55. active rows, combined ID filters and normalized status are applied', (
   ]; while(rows[0].length<31) rows.forEach(r=>r.push(''));
   const filters = ctx.operatorCardNormalizeFilters_({ object:{allObjects:false,objectId:'2'}, documentTypeId:'T1', documentStatus:'готов', holderId:'E1', foremanId:'F1' });
   const result = ctx.operatorCardPrepareRows_(rows,indexes,filters,{active:false},4);
-  assert.equal(result.activeCount,1); assert.equal(result.rows.length,1); assert.equal(result.cardRows[0].length,26);
+  assert.equal(result.activeCount,1); assert.equal(result.rows.length,1); assert.equal(result.cardRows[0].length,27);
 });
 test('56. natural sorting uses object, type, document and physical row', () => {
-  const ctx = baseContext(); const i={documentId:0,objectId:1,documentTypeId:2,documentStatus:3,holderId:4,foremanId:5,createdAt:6,recordStatus:7,transferredById:30};
+  const ctx = baseContext(); const i={documentId:0,objectId:1,documentTypeId:2,documentStatus:3,holderId:4,foremanId:5,createdAt:6,recordStatus:7,transferredById:30,documentHolder:9,transferredBy:11};
   const rows=[['DOC-10','2','10','','','','','Активная'],['DOC-2','2','2','','','','','Активная'],['DOC-1','10','1','','','','','Активная']]; rows.forEach(r=>{while(r.length<31)r.push('')});
   const result=ctx.operatorCardPrepareRows_(rows,i,ctx.operatorCardNormalizeFilters_({}),{active:false},4);
   assert.deepEqual(Array.from(result.rows,x=>x.row[0]),['DOC-2','DOC-10','DOC-1']);
 });
 test('57. active duplicate group is retained and reports physical rows once per ID', () => {
-  const ctx=baseContext(); const i={documentId:0,objectId:1,documentTypeId:2,documentStatus:3,holderId:4,foremanId:5,createdAt:6,recordStatus:7,transferredById:30};
+  const ctx=baseContext(); const i={documentId:0,objectId:1,documentTypeId:2,documentStatus:3,holderId:4,foremanId:5,createdAt:6,recordStatus:7,transferredById:30,documentHolder:9,transferredBy:11};
   const rows=[['D1','A','','','','','','Активная'],['D1','B','','','','','','Активная'],['D1','A','','','','','','Архивная']]; rows.forEach(r=>{while(r.length<31)r.push('')});
   const result=ctx.operatorCardPrepareRows_(rows,i,ctx.operatorCardNormalizeFilters_({object:{allObjects:false,objectId:'A'}}),{active:false},18);
   assert.equal(result.rows.length,1); assert.equal(result.duplicateIdsCount,1); assert.match(result.warnings[0],/18 и 19/); assert.doesNotMatch(result.warnings[0],/20/);
@@ -687,18 +687,18 @@ test('57. active duplicate group is retained and reports physical rows once per 
 test('58. card replacement performs one 26-column setValues and clears tail', () => {
   const ctx=baseContext(); let calls=0, written;
   const sheet={getLastRow:()=>8,getRange(row,col,count,width){return {getValues:()=>[['old1'],['old2'],['']],setValues(values){calls++;written={row,col,count,width,values}}}}};
-  ctx.operatorCardReplace_({sheet,config:{dataStartRow:6},headerMap:{'ID документа':1}},[[1,2].concat(Array(24).fill(''))]);
-  assert.equal(calls,1); assert.equal(written.width,26); assert.equal(written.values.length,2); assert.ok(written.values[1].every(v=>v===''));
+  ctx.operatorCardReplace_({sheet,config:{dataStartRow:6},headerMap:{'ID документа':1}},[[1,2].concat(Array(25).fill(''))]);
+  assert.equal(calls,1); assert.equal(written.width,27); assert.equal(written.values.length,2); assert.ok(written.values[1].every(v=>v===''));
 });
 test('59. zero result clears old card in one batch', () => {
   const ctx=baseContext(); let values; const sheet={getLastRow:()=>6,getRange(){return {getValues:()=>[['old']],setValues(v){values=v}}}};
-  ctx.operatorCardReplace_({sheet,config:{dataStartRow:6},headerMap:{'ID документа':1}},[]); assert.equal(values.length,1); assert.equal(values[0].length,26); assert.ok(values[0].every(v=>v===''));
+  ctx.operatorCardReplace_({sheet,config:{dataStartRow:6},headerMap:{'ID документа':1}},[]); assert.equal(values.length,1); assert.equal(values[0].length,27); assert.ok(values[0].every(v=>v===''));
 });
 test('60. operator implementation never writes facts, dictionaries, or change history', () => {
   const text=fs.readFileSync('OperatorCard.gs','utf8');
   assert.doesNotMatch(text,/appendRow|\.clear\s*\(|deleteRows|insertRows/);
   assert.doesNotMatch(text,/getSystemSheetContext_\('CHANGE_HISTORY'\)/);
-  assert.match(text,/getRange\(start, cardStartColumn, writeCount, 26\)\.setValues/);
+  assert.match(text,/getRange\(start, cardStartColumn, writeCount, 27\)\.setValues/);
 });
 
 
@@ -717,7 +717,7 @@ test('62. inclusive date boundaries use spreadsheet timezone and next calendar d
   assert.doesNotMatch(fs.readFileSync('OperatorCard.gs','utf8'),/24\s*\*\s*60\s*\*\s*60|86400000/);
 });
 test('63. active date filter excludes blank and warns about invalid nonblank dates', () => {
-  const ctx=baseContext(); const i={documentId:0,objectId:1,documentTypeId:2,documentStatus:3,holderId:4,foremanId:5,createdAt:6,recordStatus:7,transferredById:30};
+  const ctx=baseContext(); const i={documentId:0,objectId:1,documentTypeId:2,documentStatus:3,holderId:4,foremanId:5,createdAt:6,recordStatus:7,transferredById:30,documentHolder:9,transferredBy:11};
   const valid=vm.runInContext("new Date('2026-08-10T12:00:00Z')",ctx);
   const rows=[['A','','','','','',valid,'Активная'],['B','','','','','','','Активная'],['C','','','','','','bad','Активная']];rows.forEach(r=>{while(r.length<31)r.push('')});
   const range=ctx.operatorCardParseDateRange_('2026-08-10','2026-08-10','UTC');
@@ -726,8 +726,8 @@ test('63. active date filter excludes blank and warns about invalid nonblank dat
 });
 
 
-const operatorWorkflowCardHeaders = ['ID документа','ID объекта','Тип документа','Номер договора','Дата документа','Статус документа','Оригинал / ЭДО','Комментарий','У кого документ','Где документ','Кто передал','Оплачен','Сумма документа','ГУ (Да/Нет)','Условия ГУ','Статус объекта','Дата начала работ','Дата окончания (по плану)','Дата окончания (по факту)','Дата создания','Дата обновления','ID типа документа','Кто обновил (email)','Ответственный прораб'].concat(['Статус записи','Номер строки в таблице фактов']);
-const operatorWorkflowDocumentHeaders = operatorWorkflowCardHeaders.slice(0,24).concat(['ID сотрудника — у кого документ','ID сотрудника — кто передал','ID ответственного прораба','Дата изменения статуса документа','Отчётный период','Источник создания','Статус записи']);
+const operatorWorkflowCardHeaders = ['ID документа','ID объекта','Название объекта','Тип документа','Номер договора','Дата документа','Статус документа','Оригинал / ЭДО','Комментарий','У кого документ','Где документ','Кто передал','Оплачен','Сумма документа','ГУ (Да/Нет)','Условия ГУ','Статус объекта','Дата начала работ','Дата окончания (по плану)','Дата окончания (по факту)','Дата создания','Дата обновления','ID типа документа','Кто обновил (email)','Ответственный прораб'].concat(['Статус записи','Номер строки в таблице фактов']);
+const operatorWorkflowDocumentHeaders = operatorWorkflowCardHeaders.slice(0,25).concat(['ID сотрудника — у кого документ','ID сотрудника — кто передал','ID ответственного прораба','Дата изменения статуса документа','Отчётный период','Источник создания','Статус записи']);
 const operatorWorkflowOperationHeaders = ['ID операции','Дата и время начала','Дата и время завершения','Кто запустил (email)','Источник операции','Тип операции','Статус операции','Документов загружено в карточку','Документов с изменениями','Строк факта обновлено','Полей изменено','Дублирующихся ID найдено','Ошибок','Время выполнения, сек.','Текст ошибки / комментарий'];
 
 function operatorWorkflowFixture(options = {}) {
@@ -749,7 +749,7 @@ function operatorWorkflowFixture(options = {}) {
   ctx.getSystemSpreadsheet_ = () => ({ getSpreadsheetTimeZone: () => 'UTC' });
   ctx.operatorCardGetFilterData_ = () => ({ objects: [{ id:'', name:'Все', isAllObjects:true }], foremen: [], employees: [], documentTypes: [] });
   ctx.operatorCardValidateSelection_ = options.validationError ? () => { throw new Error(options.validationError); } : () => {};
-  ctx.operatorCardPrepareRows_ = () => ({ activeCount: options.activeCount == null ? 2 : options.activeCount, rows: [], cardRows: Array.from({length: options.loadedCount == null ? 2 : options.loadedCount}, (_, index) => [index + 1].concat(Array(25).fill(''))), warnings: (options.warnings || []).slice(), duplicateIdsCount: options.duplicateIdsCount || 0, invalidDatesCount: 0 });
+  ctx.operatorCardPrepareRows_ = () => ({ activeCount: options.activeCount == null ? 2 : options.activeCount, rows: [], cardRows: Array.from({length: options.loadedCount == null ? 2 : options.loadedCount}, (_, index) => [index + 1].concat(Array(26).fill(''))), warnings: (options.warnings || []).slice(), duplicateIdsCount: options.duplicateIdsCount || 0, invalidDatesCount: 0 });
   ctx.operatorCardGetValidationData_ = () => [];
   ctx.operatorCardApplyValidations_ = () => {};
   ctx.operatorCardReplace_ = () => { calls.cardWrites++; };
@@ -848,10 +848,11 @@ test('70. shifted facts and independently shifted card use their ID-document sta
     documentId: physicalIndexes['ID документа'], objectId: physicalIndexes['ID объекта'],
     documentTypeId: physicalIndexes['ID типа документа'], documentStatus: physicalIndexes['Статус документа'],
     holderId: physicalIndexes['ID сотрудника — у кого документ'], foremanId: physicalIndexes['ID ответственного прораба'],
-    createdAt: physicalIndexes['Дата создания'], recordStatus: physicalIndexes['Статус записи'], transferredById: physicalIndexes['ID сотрудника — кто передал']
+    createdAt: physicalIndexes['Дата создания'], recordStatus: physicalIndexes['Статус записи'], transferredById: physicalIndexes['ID сотрудника — кто передал'],
+    documentHolder: physicalIndexes['У кого документ'], transferredBy: physicalIndexes['Кто передал']
   }, ctx.operatorCardNormalizeFilters_({}), {active:false}, 4, 1);
   assert.equal(prepared.cardRows.length, 1);
-  assert.equal(prepared.cardRows[0].length, 26);
+  assert.equal(prepared.cardRows[0].length, 27);
   assert.equal(prepared.cardRows[0][0], 'DOC-7');
   assert.ok(!prepared.cardRows[0].includes('служебное значение слева'));
 
@@ -867,7 +868,7 @@ test('70. shifted facts and independently shifted card use their ID-document sta
   assert.equal(rangeCalls.length, 2);
   assert.deepEqual(rangeCalls.map(call => call.column), [3, 3]);
   assert.equal(rangeCalls[0].columnCount, 1);
-  assert.equal(rangeCalls[1].columnCount, 26);
+  assert.equal(rangeCalls[1].columnCount, 27);
   assert.ok(rangeCalls.every(call => call.column >= 3), 'columns left of the card block must not be touched');
 });
 
@@ -888,11 +889,11 @@ function operatorDictionaryContext(headers, dataStartRow, rows) {
 test('71. filter data reads shifted real objects, test foremen, and unique card statuses', () => {
   const ctx = baseContext();
   const contexts = {
-    OBJECTS: operatorDictionaryContext(['','ID объекта','Название'], 4, [
+    OBJECTS: operatorDictionaryContext(['','ID объекта','Название объекта'], 3, [
       ['', '10', 'Дом 10'], ['', '2', 'Дом 2']
     ]),
     EMPLOYEES: operatorDictionaryContext(['','ID Сотрудника','ФИО сотрудника','Должность'], 5, [
-      ['', 'E1', 'Иванов', '  эКсПеДиТоР\u00a0 '], ['', 'E2', 'Петров', 'Бухгалтер']
+      ['', 'E1', 'Иванов', '  гЛаВнЫй\u00a0 ИнЖеНеР '], ['', 'E2', 'Петров', 'Бухгалтер']
     ]),
     CLIENTS: operatorDictionaryContext(['','ID клиента','Наименование клиента'], 5, []),
     DOCUMENT_TYPES: operatorDictionaryContext(['','ID типа документа','Тип документа'], 5, [
@@ -975,13 +976,13 @@ test('74. card validations use headerMap ranges and survive reload, zero result,
   assert.ok(Object.values(validations).every(item => item.row===6 && item.rowCount===15 && item.columnCount===1));
   assert.ok(Object.values(validations).every(item => item.rule.allowInvalid===true));
   const snapshot = JSON.stringify(validations);
-  const row = ['DOC'].concat(Array(25).fill(''));
+  const row = ['DOC'].concat(Array(26).fill(''));
   ctx.operatorCardReplace_(context,[row]);
   ctx.operatorCardReplace_(context,[]);
   ctx.operatorCardReplace_(context,[row]);
   assert.equal(JSON.stringify(validations), snapshot, 'setValues must preserve validations');
   assert.equal(writes.length,3);
-  assert.ok(writes.every(write => write.column===3 && write.columnCount===26));
+  assert.ok(writes.every(write => write.column===3 && write.columnCount===27));
 });
 
 test('75. sidebar groups creation dates and reset is local-only for all filters', () => {
@@ -1008,7 +1009,7 @@ test('76. empty sidebar filter contract means all objects and no additional rest
   assert.equal(filters.object.allObjects,true);
   assert.equal(filters.foremanId,''); assert.equal(filters.documentStatus,'');
   assert.equal(filters.documentTypeId,''); assert.equal(filters.holderId,'');
-  const indexes={documentId:0,objectId:1,documentTypeId:2,documentStatus:3,holderId:4,foremanId:5,createdAt:6,recordStatus:7,transferredById:30};
+  const indexes={documentId:0,objectId:1,documentTypeId:2,documentStatus:3,holderId:4,foremanId:5,createdAt:6,recordStatus:7,transferredById:30,documentHolder:9,transferredBy:11};
   const rows=[['D1','OBJ1','T1','Подписан','E1','F1','','Активная'],['D2','OBJ2','T2','Новый','E2','F2','','Активная']];
   rows.forEach(row=>{while(row.length<31)row.push('')});
   const result=ctx.operatorCardPrepareRows_(rows,indexes,filters,{active:false},4,0);
@@ -1026,11 +1027,11 @@ test('78. save endpoint is thin and critical workflow uses document lock', () =>
   assert.match(fs.readFileSync('Code.gs','utf8'),/saveOperatorCardChanges\(filters\)[\s\S]*return operatorCardSave_\(filters\)/);
   assert.match(fs.readFileSync('OperatorCardSave.gs','utf8'),/withDocumentLock_\(function/);
 });
-test('79. loader writes physical row and record status without slicing a 25th fact field', () => {
+test('79. loader copies 25 fact fields then appends status and physical row', () => {
   const text=fs.readFileSync('OperatorCard.gs','utf8');
-  assert.match(text,/slice\(sourceStartIndex, sourceStartIndex \+ 24\)/);
+  assert.match(text,/slice\(sourceStartIndex, sourceStartIndex \+ 25\)/);
   assert.match(text,/concat\(\[item\.row\[indexes\.recordStatus\], item\.sheetRow\]\)/);
-  assert.match(text,/hideColumns\(technicalColumn\)/);
+  assert.match(text,/hideColumns\(cardStartColumn, 2\)/);
 });
 test('80. holder dictionary is employee then client and labels contain IDs', () => {
   const text=fs.readFileSync('OperatorCard.gs','utf8');
@@ -1074,7 +1075,7 @@ function partialSaveFixture(ctx, options = {}) {
   const documentId = options.documentId || 'DOC-1';
   const factRow = options.factRow || 10;
   const base = {
-    'ID документа':documentId,'ID объекта':'OBJ-1','ID типа документа':'TYPE-1',
+    'ID документа':documentId,'ID объекта':'OBJ-1','Название объекта':'Объект Альфа','ID типа документа':'TYPE-1',
     'Тип документа':'Акт','Номер договора':'CN-1','Дата документа':'',
     'Статус документа':'Новый','Оригинал / ЭДО':'Оригинал','Комментарий':'old',
     'У кого документ':'','Где документ':'Офис','Кто передал':'','Оплачен':'Нет',
@@ -1234,6 +1235,180 @@ test('104. a fact-write failure is fatal and never claims guaranteed save succes
   assert.doesNotMatch(thrown.message,/Данные документов сохранены/);
   assert.equal(operationRow[operationHeaders.indexOf('Статус операции')],'Ошибка');
   assert.match(operationRow[operationHeaders.indexOf('Текст ошибки / комментарий')],/неопредел|Часть изменений могла быть записана/);
+});
+
+test('105. document and object IDs remain hidden technical card fields', () => {
+  const ctx = baseContext();
+  const map = Array.from(vm.runInContext('SYSTEM_CONFIG.CARD_FIELD_MAP',ctx));
+  assert.equal(map.find(x => x.cardHeader === 'ID документа').technical, true);
+  assert.equal(map.find(x => x.cardHeader === 'ID объекта').technical, true);
+  assert.match(fs.readFileSync('OperatorCard.gs','utf8'), /hideColumns\(cardStartColumn, 2\)/);
+});
+test('106. object name is read directly from the fact row', () => {
+  const ctx=baseContext(); const i={documentId:0,objectId:1,documentTypeId:22,documentStatus:6,holderId:25,foremanId:27,createdAt:20,recordStatus:31,transferredById:26,documentHolder:9,transferredBy:11};
+  const row=['D1','OBJ-1','Башня']; while(row.length<32) row.push(''); row[31]='Активная';
+  const result=ctx.operatorCardPrepareRows_([row],i,ctx.operatorCardNormalizeFilters_({}),{active:false},4,0,{});
+  assert.equal(result.cardRows[0][2],'Башня');
+  assert.doesNotMatch(fs.readFileSync('OperatorCard.gs','utf8'),/objectNames|Не удалось определить название объекта/);
+});
+test('107. approved foreman positions normalize case whitespace and NBSP', () => {
+  const ctx=baseContext();
+  assert.equal(ctx.objectControlsNormalize_('  ГЛАВНЫЙ\u00a0  ИНЖЕНЕР '),'главный инженер');
+  const allowed=Array.from(vm.runInContext('SYSTEM_CONFIG.VALUES.FOREMAN_POSITIONS',ctx));
+  assert.ok(allowed.includes('Главный инженер')); assert.ok(!allowed.includes('Бухгалтер'));
+});
+test('108. duplicate normalized foreman names with different ST-IDs fail safely', () => {
+  const ctx=baseContext();
+  const rows=[['ST-1',' Иванов\u00a0Иван ','Главный инженер'],['ST-2','иванов  иван','Начальник Участка'],['ST-3','Петров','Бухгалтер']];
+  ctx.getSystemSheetContext_=()=>({config:{dataStartRow:5},sheet:{getLastRow:()=>7,getRange:()=>({getValues:()=>rows})}});
+  ctx.getSystemColumn_=(key,h)=>({'ID Сотрудника':1,'ФИО сотрудника':2,'Должность':3})[h];
+  assert.throws(()=>ctx.objectControlsForemen_(),/одинаковые ФИО.*ST-1, ST-2.*Невозможно однозначно определить ID/);
+});
+test('109. object statuses are centralized and preserve approved spelling', () => {
+  const statuses=Array.from(vm.runInContext('SYSTEM_CONFIG.VALUES.OBJECT_STATUSES',baseContext()));
+  assert.deepEqual(statuses,['Действующий','Завершён','Отменён']);
+  for(const documentStatus of ['На подготовке','Передан заказчику','Требует исправления','Подписан с обеих сторон']) assert.ok(!statuses.includes(documentStatus));
+});
+test('110. object synchronization still carries foreman name, ST-ID and status', () => {
+  const text=fs.readFileSync('SyncObjectData.gs','utf8');
+  assert.match(text,/H\.OBJECT_STATUS/); assert.match(text,/H\.RESPONSIBLE_FOREMAN/); assert.match(text,/H\.RESPONSIBLE_FOREMAN_ID/);
+});
+
+test('111. objects start at physical row 3 and modules use configured start rows', () => {
+  const ctx=baseContext();
+  assert.equal(vm.runInContext('SYSTEM_CONFIG.SHEETS.OBJECTS.dataStartRow',ctx),3);
+  for(const file of ['CreateObjectDocuments.gs','SyncObjectData.gs','OperatorCard.gs','ObjectSheetControls.gs']) {
+    const text=fs.readFileSync(file,'utf8');
+    assert.doesNotMatch(text,/OBJECTS[^\n]{0,120}dataStartRow\s*[:=]\s*4/);
+  }
+});
+test('112. foreman dropdown uses clean names only', () => {
+  const ctx=baseContext({SpreadsheetApp:{flush(){},newDataValidation(){const rule={requireValueInList(values){rule.values=values;return rule},setAllowInvalid(){return rule},build(){return rule}};return rule}}});
+  const rules=[]; const objects={config:{dataStartRow:3},sheet:{getMaxRows:()=>10,getRange:()=>({setDataValidation(rule){rules.push(rule)}}),hideColumns(){}}};
+  ctx.assertSystemSheetsStructure_=()=>{}; ctx.getSystemSheetContext_=key=>key==='OBJECTS'?objects:{};
+  ctx.objectControlsForemen_=()=>[{id:'ST-16',name:'Иванов Иван Иванович'}]; ctx.objectControlsEnsureStatuses_=()=>['Действующий','Завершён','Отменён'];
+  ctx.getSystemColumn_=(key,h)=>h==='Ответственный прораб'?6:h==='Статус объекта'?7:5;
+  ctx.setupObjectSheetControls();
+  assert.deepEqual(Array.from(rules[0].values),['Иванов Иван Иванович']);
+  assert.ok(!rules[0].values[0].includes('[ST-'));
+});
+test('113. onEdit preserves clean FIO, writes ST-ID, and clearing FIO clears ID', () => {
+  const ctx=baseContext(); let fio=''; let id='OLD'; let note='';
+  const idCell={setValue(v){id=v;return this},clearContent(){id='';return this}};
+  const sheet={getName:()=>'Объекты',getSheetId:()=>10,getRange:()=>idCell};
+  const range={getNumRows:()=>1,getNumColumns:()=>1,getSheet:()=>sheet,getRow:()=>3,getColumn:()=>6,setValue(v){fio=v;return this},setNote(v){note=v;return this},clearContent(){fio='';return this}};
+  ctx.getSystemSheetContext_=()=>({config:{dataStartRow:3},sheet});
+  ctx.getSystemColumn_=(key,h)=>h==='Ответственный прораб'?6:5;
+  ctx.objectControlsForemen_=()=>[{id:'ST-16',name:'Иванов Иван Иванович'}];
+  ctx.onEdit({range,value:'Иванов Иван Иванович'});
+  assert.equal(fio,'Иванов Иван Иванович'); assert.equal(id,'ST-16'); assert.match(note,/ST-ID/);
+  ctx.onEdit({range,value:''}); assert.equal(id,'');
+  id='OLD'; fio='bad'; ctx.onEdit({range,value:'Неизвестный'}); assert.equal(id,''); assert.equal(fio,''); assert.match(note,/выпадающего списка/);
+});
+
+test('114. final object-name contracts match physical sheets', () => {
+  const ctx=baseContext();
+  assert.equal(vm.runInContext('H.OBJECT_NAME',ctx),'Название объекта');
+  const documents=Array.from(vm.runInContext('SYSTEM_CONFIG.SHEETS.DOCUMENTS.requiredHeaders',ctx));
+  const card=Array.from(vm.runInContext('SYSTEM_CONFIG.SHEETS.OPERATOR_CARD.requiredHeaders',ctx));
+  assert.equal(documents.length,32); assert.equal(documents[2],'Название объекта');
+  assert.equal(card.length,27); assert.equal(card[2],'Название объекта');
+  assert.deepEqual(card.slice(0,25),documents.slice(0,25));
+});
+test('115. creation writes object name and sync histories name changes', () => {
+  const created=creationPrepareFixture(1); const headers=['ID документа','ID объекта','Название объекта','Тип документа','Номер договора','Статус документа','Статус объекта','Дата начала работ','Дата окончания (по плану)','Дата окончания (по факту)','Дата создания','Дата обновления','Кто обновил (email)','Ответственный прораб','ID ответственного прораба','Дата изменения статуса документа','Источник создания','Статус записи'];
+  assert.equal(created.documentRows[0][headers.indexOf('Название объекта')],'Объект 1');
+  const fixture=syncFixture(Object.assign({},baseline,{'Название объекта':'Новое имя'}),[document()]);
+  const change=fixture.result.changes.find(item=>item.fieldName==='Название объекта');
+  assert.ok(change); assert.equal(change.oldValue,'Объект Альфа'); assert.equal(change.newValue,'Новое имя');
+});
+test('116. object name is a normal read-only fact field', () => {
+  const ctx=baseContext(); const mapping=Array.from(vm.runInContext('SYSTEM_CONFIG.CARD_FIELD_MAP',ctx)).find(item=>item.cardHeader==='Название объекта');
+  assert.equal(mapping.factHeader,'Название объекта'); assert.equal(mapping.editable,false); assert.equal(mapping.derived,undefined);
+  assert.doesNotMatch(fs.readFileSync('OperatorCardSave.gs','utf8'),/mapping\.derived/);
+  const changed=partialSaveFixture(ctx,{card:{'Название объекта':'Подмена'}});
+  const rejected=ctx.operatorCardBuildSavePlan_([changed.card],[changed.fact],partialDictionaries(),new Date(),'x@x','OP-20260804-0001');
+  assert.equal(rejected.rows.length,0); assert.match(rejected.rowErrors[0].message,/Название объекта/);
+  const editable=partialSaveFixture(ctx,{card:{'Комментарий':'new'}});
+  const accepted=ctx.operatorCardBuildSavePlan_([editable.card],[editable.fact],partialDictionaries(),new Date(),'x@x','OP-20260804-0002');
+  assert.equal(accepted.rows.length,1);
+});
+
+test('117. creation accepts every object status and rejects an empty status', () => {
+  const ctx=baseContext();
+  const headers=['ID объекта','Название объекта','Адрес','Номер договора','ID ответственного прораба','Ответственный прораб','Статус объекта','Дата начала работ','Дата окончания (по плану)','Дата окончания (по факту)'];
+  const start=vm.runInContext("new Date('2026-08-01T00:00:00Z')",ctx);
+  const end=vm.runInContext("new Date('2026-08-31T00:00:00Z')",ctx);
+  const statuses=['Действующий','Завершён','Отменён','','На подготовке'];
+  const rows=statuses.map((status,index)=>['OBJ-'+index,'Объект '+index,'','DOG-'+index,'ST-1','Иванов',status,start,end,'']);
+  const context={headers,headerMap:Object.fromEntries(headers.map((h,i)=>[h,i+1])),config:{dataStartRow:3,requiredHeaders:headers},sheet:{getLastRow:()=>7,getRange:()=>({getValues:()=>rows})}};
+  ctx.getSystemSheetContext_=()=>context;
+  const result=ctx.readAndValidateCreationObjects_();
+  assert.deepEqual(Array.from(result.validObjects,item=>item.objectStatus),['Действующий','Завершён','Отменён']);
+  assert.equal(result.skippedObjects.length,2); assert.match(result.skippedObjects[0].reasons.join(' '),/не заполнено поле «Статус объекта»/);
+  assert.match(result.skippedObjects[1].reasons.join(' '),/недопустимое значение «На подготовке»/);
+});
+
+function readOnlyGuardFixture(editColumn, editWidth, mutate) {
+  const ctx=baseContext();
+  const cardHeaders=operatorWorkflowCardHeaders.slice();
+  const factHeaders=operatorWorkflowDocumentHeaders.slice();
+  const card=['DOC-1','OBJ-1','Объект А','Акт','DOG-1','', 'Новый','Оригинал','old','', 'Офис','', 'Нет','', 'Нет','', 'Действующий','','','','created','v1','TYPE-1','old@example.com','Иванов','Активная',4];
+  const fact=card.slice(0,25).concat(['','','ST-1','','','','Активная']);
+  if (mutate) mutate(card);
+  const notes={}; let cardReads=0,factReads=0;
+  const cardSheet={getName:()=> 'Карточка операциониста',getSheetId:()=>20,getRange(row,column,rowCount,columnCount){
+    if (rowCount!==undefined) { cardReads++; return {getValues:()=>[card.slice(column-1,column-1+columnCount)]}; }
+    return {setValue(value){card[column-1]=value;return this},setNote(value){notes[column]=value;return this}};
+  }};
+  const factSheet={getLastRow:()=>4,getRange(row,column,rowCount,columnCount){factReads++;return {getValues:()=>[fact.slice()]}}};
+  const cardContext={config:{dataStartRow:6,requiredHeaders:cardHeaders},headers:cardHeaders,headerMap:Object.fromEntries(cardHeaders.map((h,i)=>[h,i+1])),sheet:cardSheet};
+  const factContext={config:{dataStartRow:4},headers:factHeaders,headerMap:Object.fromEntries(factHeaders.map((h,i)=>[h,i+1])),sheet:factSheet};
+  ctx.getSystemSheetContext_=key=>key==='OPERATOR_CARD'?cardContext:factContext;
+  const range={getSheet:()=>cardSheet,getRow:()=>6,getNumRows:()=>1,getColumn:()=>editColumn,getNumColumns:()=>editWidth};
+  return {ctx,card,fact,notes,range,reads:()=>({cardReads,factReads})};
+}
+test('118. project has exactly one global onEdit router', () => {
+  const count=files.reduce((sum,file)=>sum+(fs.readFileSync(file,'utf8').match(/function\s+onEdit\s*\(/g)||[]).length,0);
+  assert.equal(count,1); const text=fs.readFileSync('ObjectSheetControls.gs','utf8');
+  assert.match(text,/objectControlsHandleEdit_\(event\)/); assert.match(text,/operatorCardHandleReadOnlyEdit_\(event\)/);
+});
+test('119. card guard restores object name, contract and object date from physical fact row', () => {
+  for(const [header,bad] of [['Название объекта','ТЕСТ'],['Номер договора','BAD'],['Дата окончания (по плану)','BAD DATE']]) {
+    const column=operatorWorkflowCardHeaders.indexOf(header)+1;
+    const fixture=readOnlyGuardFixture(column,1,card=>{card[column-1]=bad}); const expected=fixture.fact[column-1];
+    fixture.ctx.operatorCardHandleReadOnlyEdit_({range:fixture.range});
+    assert.equal(fixture.card[column-1],expected,header); assert.match(fixture.notes[column],/недоступно для ручного изменения/);
+    assert.deepEqual(fixture.reads(),{cardReads:1,factReads:1});
+  }
+});
+test('120. card guard ignores editable comment and document status', () => {
+  for(const header of ['Комментарий','Статус документа']) {
+    const column=operatorWorkflowCardHeaders.indexOf(header)+1;
+    const fixture=readOnlyGuardFixture(column,1,card=>{card[column-1]='USER VALUE'});
+    fixture.ctx.operatorCardHandleReadOnlyEdit_({range:fixture.range});
+    assert.equal(fixture.card[column-1],'USER VALUE'); assert.deepEqual(fixture.reads(),{cardReads:0,factReads:0});
+  }
+});
+test('121. mixed paste restores only read-only cells and preserves editable cells', () => {
+  const first=3,width=7;
+  const fixture=readOnlyGuardFixture(first,width,card=>{
+    for(let i=first-1;i<first-1+width;i++) card[i]='PASTE-'+i;
+    card[0]='DOC-1'; card[1]='OBJ-1'; card[22]='TYPE-1';
+  });
+  fixture.ctx.operatorCardHandleReadOnlyEdit_({range:fixture.range});
+  for(const header of ['Название объекта','Тип документа','Номер договора']) {
+    const index=operatorWorkflowCardHeaders.indexOf(header); assert.equal(fixture.card[index],fixture.fact[index],header);
+  }
+  for(const header of ['Дата документа','Статус документа','Оригинал / ЭДО','Комментарий']) {
+    const index=operatorWorkflowCardHeaders.indexOf(header); assert.equal(fixture.card[index],'PASTE-'+index,header);
+  }
+});
+test('122. identity mismatch never restores from another physical fact row', () => {
+  const column=operatorWorkflowCardHeaders.indexOf('Название объекта')+1;
+  const fixture=readOnlyGuardFixture(column,1,card=>{card[1]='OTHER-OBJECT';card[column-1]='ТЕСТ'});
+  fixture.ctx.operatorCardHandleReadOnlyEdit_({range:fixture.range});
+  assert.equal(fixture.card[column-1],'ТЕСТ'); assert.match(fixture.notes[column],/identity/);
 });
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);

@@ -351,6 +351,12 @@ function readAndValidateCreationObjects_() {
         duplicateIds[candidate.id].join(', ')
       );
     }
+    const objectStatus = candidate.row[indexes[H.OBJECT_STATUS]];
+    if (!creationValueIsEmpty_(objectStatus) && !SYSTEM_CONFIG.VALUES.OBJECT_STATUSES.some(function (status) {
+      return creationNormalizedValue_(status) === creationNormalizedValue_(objectStatus);
+    })) {
+      reasons.push('поле «' + H.OBJECT_STATUS + '» содержит недопустимое значение «' + objectStatus + '»');
+    }
     const start = candidate.row[indexes[H.WORK_START_DATE]];
     const plan = candidate.row[indexes[H.WORK_END_PLAN]];
     const fact = candidate.row[indexes[H.WORK_END_FACT]];
@@ -531,6 +537,7 @@ function prepareDocumentRows_(
     const values = {};
     values[H.DOCUMENT_ID] = documentId;
     values[H.OBJECT_ID] = item.object.id;
+    values[H.OBJECT_NAME] = item.object.name;
     values[H.DOCUMENT_TYPE] = item.rule.name;
     values[H.CONTRACT_NUMBER] = item.object.contractNumber;
     values[H.DOCUMENT_STATUS] =
@@ -605,6 +612,7 @@ function buildCreationInitialSnapshot_(values) {
   const snapshotHeaders = [
     H.DOCUMENT_ID,
     H.OBJECT_ID,
+    H.OBJECT_NAME,
     H.DOCUMENT_TYPE,
     H.DOCUMENT_TYPE_ID,
     H.CONTRACT_NUMBER,

@@ -89,7 +89,9 @@ function operatorCardGetFilterData_() {
   return {
     objects: objects,
     foremen: employees.filter(function (employee) {
-      return operatorCardFold_(employee.position) === operatorCardFold_(SYSTEM_CONFIG.VALUES.FOREMAN_POSITION);
+      return SYSTEM_CONFIG.VALUES.FOREMAN_POSITIONS.some(function (position) {
+        return operatorCardFold_(employee.position) === operatorCardFold_(position);
+      });
     }),
     employees: employees,
     clients: clients,
@@ -239,15 +241,15 @@ function operatorCardValidateHeaders_(documentsHeaders, cardHeaders, documentsNa
   for (let index = 0; index < expectedCount; index++) {
     const configured = SYSTEM_CONFIG.SHEETS.OPERATOR_CARD.requiredHeaders[index];
     const actual = operatorCardNormalizeText_(cardHeaders[cardStartIndex + index]);
-    if (index < 24) {
+    if (index < 25) {
       const expected = operatorCardNormalizeText_(documentsHeaders[documentsStartIndex + index]);
       if (expected !== configured) throw new Error('Лист «' + documentsName + '», позиция ' + (index + 1) + ' рабочего блока: ожидается заголовок «' + configured + '», фактически «' + expected + '».');
     }
-    if (actual !== configured) throw new Error('Лист «' + cardName + '», позиция ' + (index + 1) + ' рабочего блока: ожидается заголовок «' + configured + '», фактически «' + actual + '».');
+    if (actual !== operatorCardNormalizeText_(configured)) throw new Error('Лист «' + cardName + '», позиция ' + (index + 1) + ' рабочего блока: ожидается заголовок «' + configured + '», фактически «' + actual + '».');
   }
   for (let index = cardStartIndex + expectedCount; index < cardHeaders.length; index++) {
     const actual = operatorCardNormalizeText_(cardHeaders[index]);
-    if (actual) throw new Error('Лист «' + cardName + '», физическая колонка ' + (index + 1) + ': ожидается пустой заголовок после утверждённых 26 полей, фактически «' + actual + '».');
+    if (actual) throw new Error('Лист «' + cardName + '», физическая колонка ' + (index + 1) + ': ожидается пустой заголовок после утверждённых 27 полей, фактически «' + actual + '».');
   }
   return true;
 }
@@ -299,7 +301,12 @@ function operatorCardPrepareRows_(rows, indexes, filters, dateRange, dataStartRo
     warnings.push('ID документа «' + id + '» повторяется в активных строках ' + duplicateGroups[id].join(' и ') + '.');
   });
   if (invalidDates) warnings.push('Строк с некорректной датой создания пропущено: ' + invalidDates + '.');
-  return { activeCount: active.length, rows: selected, cardRows: selected.map(function (item) { const cardRow = item.row.slice(sourceStartIndex, sourceStartIndex + 24); cardRow[8] = operatorCardDisplayLabel_(cardRow[8], item.row[indexes.holderId]); cardRow[10] = operatorCardDisplayLabel_(cardRow[10], item.row[indexes.transferredById]); return cardRow.concat([item.row[indexes.recordStatus], item.sheetRow]); }), warnings: warnings, duplicateIdsCount: Object.keys(selectedDuplicateIds).length, invalidDatesCount: invalidDates };
+  return { activeCount: active.length, rows: selected, cardRows: selected.map(function (item) {
+    const cardRow = item.row.slice(sourceStartIndex, sourceStartIndex + 25);
+    cardRow[indexes.documentHolder - sourceStartIndex] = operatorCardDisplayLabel_(item.row[indexes.documentHolder], item.row[indexes.holderId]);
+    cardRow[indexes.transferredBy - sourceStartIndex] = operatorCardDisplayLabel_(item.row[indexes.transferredBy], item.row[indexes.transferredById]);
+    return cardRow.concat([item.row[indexes.recordStatus], item.sheetRow]);
+  }), warnings: warnings, duplicateIdsCount: Object.keys(selectedDuplicateIds).length, invalidDatesCount: invalidDates };
 }
 
 function operatorCardReplace_(cardContext, newRows) {
@@ -315,11 +322,76 @@ function operatorCardReplace_(cardContext, newRows) {
   const writeCount = Math.max(oldCount, newRows.length);
   if (!writeCount) return;
   const output = Array.from({ length: writeCount }, function (_, index) {
-    return index < newRows.length ? newRows[index].slice() : Array(26).fill('');
+    return index < newRows.length ? newRows[index].slice() : Array(27).fill('');
   });
-  sheet.getRange(start, cardStartColumn, writeCount, 26).setValues(output);
-  const technicalColumn = cardStartColumn + 25;
-  if (sheet.hideColumns) sheet.hideColumns(technicalColumn);
+  sheet.getRange(start, cardStartColumn, writeCount, 27).setValues(output);
+  if (sheet.hideColumns) {
+    sheet.hideColumns(cardStartColumn, 2);
+    sheet.hideColumns(cardStartColumn + 26);
+  }
+}
+
+/** Restores manually edited read-only card cells from their physical fact rows. */
+function operatorCardHandleReadOnlyEdit_(event) {
+  if (!event || !event.range ||
+      event.range.getSheet().getName() !== SYSTEM_CONFIG.SHEETS.OPERATOR_CARD.name) return;
+  const card = getSystemSheetContext_('OPERATOR_CARD');
+  const edit = event.range;
+  const firstRow = Math.max(edit.getRow(), card.config.dataStartRow);
+  const lastRow = edit.getRow() + edit.getNumRows() - 1;
+  if (lastRow < firstRow) return;
+  const firstColumn = edit.getColumn();
+  const lastColumn = firstColumn + edit.getNumColumns() - 1;
+  const readOnlyMappings = SYSTEM_CONFIG.CARD_FIELD_MAP.filter(function (mapping) {
+    if (mapping.editable !== false) return false;
+    const column = card.headerMap[sysNormalizeHeader_(mapping.cardHeader)];
+    return column >= firstColumn && column <= lastColumn;
+  });
+  if (!readOnlyMappings.length) return;
+
+  const cardStartColumn = card.headerMap[sysNormalizeHeader_(H.DOCUMENT_ID)];
+  const cardWidth = card.config.requiredHeaders.length;
+  const cardRows = card.sheet.getRange(firstRow, cardStartColumn, lastRow - firstRow + 1, cardWidth).getValues();
+  const rowColumn = card.headerMap[sysNormalizeHeader_(H.FACT_ROW_NUMBER)] - cardStartColumn;
+  const documents = getSystemSheetContext_('DOCUMENTS');
+  const factRows = cardRows.map(function (row) { return Number(row[rowColumn]); });
+  const validFactRows = factRows.filter(function (row) {
+    return Number.isInteger(row) && row >= documents.config.dataStartRow && row <= documents.sheet.getLastRow();
+  });
+  const minFactRow = validFactRows.length ? Math.min.apply(null, validFactRows) : 0;
+  const maxFactRow = validFactRows.length ? Math.max.apply(null, validFactRows) : -1;
+  const factValues = validFactRows.length ? documents.sheet.getRange(
+    minFactRow, 1, maxFactRow - minFactRow + 1, documents.headers.length
+  ).getValues() : [];
+  const identityHeaders = [H.DOCUMENT_ID, H.OBJECT_ID, H.DOCUMENT_TYPE_ID];
+  const automaticNote = 'Поле заполняется автоматически и недоступно для ручного изменения.';
+  const unsafeNote = 'Не удалось безопасно восстановить поле: неверная физическая строка или identity документа. Обновите карточку.';
+
+  cardRows.forEach(function (cardRow, offset) {
+    const sheetRow = firstRow + offset;
+    const factRow = factRows[offset];
+    const affectedHeaders = {};
+    readOnlyMappings.forEach(function (mapping) { affectedHeaders[mapping.cardHeader] = true; });
+    const fact = Number.isInteger(factRow) && factRow >= minFactRow && factRow <= maxFactRow
+      ? factValues[factRow - minFactRow] : null;
+    const identityMatches = !!fact && identityHeaders.every(function (header) {
+      if (affectedHeaders[header]) return true;
+      const cardIndex = card.headerMap[sysNormalizeHeader_(header)] - cardStartColumn;
+      const factIndex = documents.headerMap[sysNormalizeHeader_(header)] - 1;
+      return operatorCardNormalizeText_(cardRow[cardIndex]) === operatorCardNormalizeText_(fact[factIndex]);
+    });
+    const hasIdentityAnchor = identityHeaders.some(function (header) { return !affectedHeaders[header]; });
+    readOnlyMappings.forEach(function (mapping) {
+      const column = card.headerMap[sysNormalizeHeader_(mapping.cardHeader)];
+      const cell = card.sheet.getRange(sheetRow, column);
+      if (!identityMatches || !hasIdentityAnchor || !mapping.factHeader) {
+        cell.setNote(unsafeNote);
+        return;
+      }
+      const factIndex = documents.headerMap[sysNormalizeHeader_(mapping.factHeader)] - 1;
+      cell.setValue(fact[factIndex]).setNote(automaticNote);
+    });
+  });
 }
 
 function operatorCardComment_(filters, result, criticalError) {
@@ -382,7 +454,8 @@ function operatorCardApply_(rawFilters, suppressJournal) {
       result = operatorCardPrepareRows_(rows, {
         documentId: index(H.DOCUMENT_ID), objectId: index(H.OBJECT_ID), documentTypeId: index(H.DOCUMENT_TYPE_ID),
         documentStatus: index(H.DOCUMENT_STATUS), holderId: index(H.HOLDER_EMPLOYEE_ID), foremanId: index(H.RESPONSIBLE_FOREMAN_ID),
-        createdAt: index(H.CREATED_AT), recordStatus: index(H.RECORD_STATUS), transferredById: index(H.TRANSFERRED_BY_EMPLOYEE_ID)
+        createdAt: index(H.CREATED_AT), recordStatus: index(H.RECORD_STATUS), transferredById: index(H.TRANSFERRED_BY_EMPLOYEE_ID),
+        documentHolder: index(H.DOCUMENT_HOLDER), transferredBy: index(H.TRANSFERRED_BY)
       }, filters, range, documents.config.dataStartRow, documentsStartColumn - 1, dictionaries);
       result.loadedCount = result.cardRows.length;
       operatorCardApplyValidations_(card, operatorCardGetValidationData_(dictionaries));

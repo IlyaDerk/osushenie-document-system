@@ -1,5 +1,6 @@
 /** Поля объекта, переносимые из листа «Объекты» в активные документы. */
 const OBJECT_SYNC_FIELDS_ = Object.freeze([
+  H.OBJECT_NAME,
   H.CONTRACT_NUMBER,
   H.OBJECT_STATUS,
   H.WORK_START_DATE,

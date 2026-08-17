@@ -56,7 +56,7 @@ const SYSTEM_HEADERS = Object.freeze({
   GU_TERMS: 'Условия ГУ',
 
   // Данные объекта
-  OBJECT_NAME: 'Название',
+  OBJECT_NAME: 'Название объекта',
   OBJECT_ADDRESS: 'Адрес',
   OBJECT_STATUS: 'Статус объекта',
   WORK_START_DATE: 'Дата начала работ',
@@ -139,7 +139,7 @@ const H = SYSTEM_HEADERS;
  * ============================================================
  */
 const SYSTEM_CONFIG = {
-  VERSION: '0.5.0',
+  VERSION: '0.6.0',
 
   /**
    * Максимальное время ожидания блокировки.
@@ -173,7 +173,18 @@ const SYSTEM_CONFIG = {
     OPERATOR_CARD_SAVE_OPERATION_TYPE: 'Сохранение изменений карточки операциониста',
 
     ALL_OBJECTS_LABEL: 'Все',
-    FOREMAN_POSITION: 'Экспедитор',
+    FOREMAN_POSITIONS: Object.freeze([
+      'Начальник Участка',
+      'Производитель работ (прораб)',
+      'Начальник ремонтно-технической базы',
+      'Главный инженер',
+      'Мастер строительно-монтажного участка'
+    ]),
+    OBJECT_STATUSES: Object.freeze([
+      'Действующий',
+      'Завершён',
+      'Отменён'
+    ]),
 
     CHANGE_ACTION_CREATE: 'Создание',
     CHANGE_ACTION_SYNC: 'Синхронизация',
@@ -252,6 +263,7 @@ const SYSTEM_CONFIG = {
       requiredHeaders: [
         H.DOCUMENT_ID,
         H.OBJECT_ID,
+        H.OBJECT_NAME,
         H.DOCUMENT_TYPE,
         H.CONTRACT_NUMBER,
         H.DOCUMENT_DATE,
@@ -286,6 +298,7 @@ const SYSTEM_CONFIG = {
       requiredHeaders: [
         H.DOCUMENT_ID,
         H.OBJECT_ID,
+        H.OBJECT_NAME,
         H.DOCUMENT_TYPE,
         H.CONTRACT_NUMBER,
         H.DOCUMENT_DATE,
@@ -328,6 +341,7 @@ const SYSTEM_CONFIG = {
         H.PAID,
         H.GU_FLAG,
         H.ORIGINAL_EDO,
+        H.OBJECT_STATUS,
         H.RECORD_STATUS
       ]
     },
@@ -335,7 +349,7 @@ const SYSTEM_CONFIG = {
     OBJECTS: {
       name: 'Объекты',
       headerRow: 2,
-      dataStartRow: 4,
+      dataStartRow: 3,
       requiredHeaders: [
         H.OBJECT_ID,
         H.OBJECT_NAME,
@@ -404,17 +418,24 @@ const SYSTEM_CONFIG = {
    * editable: false — поле предназначено только для просмотра.
    *
    * Карта описывает контракт полей для будущего редактирования. Чтение
-   * карточки берёт первые 24 поля непосредственно из «Документы объектов».
+   * карточки берёт первые 25 полей непосредственно из «Документы объектов».
    */
   CARD_FIELD_MAP: [
     {
       cardHeader: H.DOCUMENT_ID,
       factHeader: H.DOCUMENT_ID,
-      editable: false
+      editable: false,
+      technical: true
     },
     {
       cardHeader: H.OBJECT_ID,
       factHeader: H.OBJECT_ID,
+      editable: false,
+      technical: true
+    },
+    {
+      cardHeader: H.OBJECT_NAME,
+      factHeader: H.OBJECT_NAME,
       editable: false
     },
     {
@@ -879,7 +900,7 @@ function validateCardFieldMap_(result) {
       );
     }
 
-    if (!documentsResult.headers.includes(factHeader)) {
+    if (field.factHeader && !documentsResult.headers.includes(factHeader)) {
       result.errors.push(
         'В карте карточки указано поле факта «' +
         field.factHeader +
