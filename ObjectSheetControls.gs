@@ -3,6 +3,10 @@ function objectControlsNormalize_(value) {
   return String(value == null ? '' : value).replace(/\u00a0/g, ' ').trim().replace(/\s+/g, ' ').toLocaleLowerCase('ru');
 }
 
+function objectControlsText_(value) {
+  return String(value == null ? '' : value).replace(/\u00a0/g, ' ').trim().replace(/\s+/g, ' ');
+}
+
 function objectControlsForemen_() {
   const context = getSystemSheetContext_('EMPLOYEES');
   const lastRow = context.sheet.getLastRow();
@@ -16,21 +20,35 @@ function objectControlsForemen_() {
   SYSTEM_CONFIG.VALUES.FOREMAN_POSITIONS.forEach(function (position) {
     allowed[objectControlsNormalize_(position)] = true;
   });
-  return context.sheet.getRange(
+  const employees = context.sheet.getRange(
     context.config.dataStartRow, firstColumn,
     lastRow - context.config.dataStartRow + 1, lastColumn - firstColumn + 1
   ).getValues().map(function (row) {
     return {
-      id: String(row[idColumn - firstColumn] == null ? '' : row[idColumn - firstColumn]).trim(),
-      name: String(row[nameColumn - firstColumn] == null ? '' : row[nameColumn - firstColumn]).trim(),
+      id: objectControlsText_(row[idColumn - firstColumn]),
+      name: objectControlsText_(row[nameColumn - firstColumn]),
       position: row[positionColumn - firstColumn]
     };
   }).filter(function (employee) {
     return employee.id && employee.name && allowed[objectControlsNormalize_(employee.position)];
-  }).map(function (employee) {
-    employee.label = employee.name + ' [' + employee.id + ']';
-    return employee;
   });
+  const byName = {};
+  const result = [];
+  employees.forEach(function (employee) {
+    const key = objectControlsNormalize_(employee.name);
+    const existing = byName[key];
+    if (existing && existing.id !== employee.id) {
+      throw new Error(
+        'В справочнике сотрудников обнаружены одинаковые ФИО у допустимых ' +
+        'ответственных прорабов: ' + existing.name + ' (' + existing.id + ', ' + employee.id + '). ' +
+        'Невозможно однозначно определить ID сотрудника.'
+      );
+    }
+    if (existing) return;
+    byName[key] = employee;
+    result.push(employee);
+  });
+  return result;
 }
 
 function objectControlsEnsureStatuses_(context) {
@@ -59,7 +77,7 @@ function setupObjectSheetControls() {
   const rowCount = objects.sheet.getMaxRows() - objects.config.dataStartRow + 1;
   if (rowCount < 1) return { foremen: foremen.length, statuses: statuses.length };
   const foremanRule = SpreadsheetApp.newDataValidation()
-    .requireValueInList(foremen.map(function (employee) { return employee.label; }), true)
+    .requireValueInList(foremen.map(function (employee) { return employee.name; }), true)
     .setAllowInvalid(false).build();
   const statusRule = SpreadsheetApp.newDataValidation()
     .requireValueInList(statuses, true).setAllowInvalid(false).build();
@@ -77,9 +95,12 @@ function onEdit(event) {
       event.range.getRow() < objects.config.dataStartRow ||
       event.range.getColumn() !== getSystemColumn_('OBJECTS', H.RESPONSIBLE_FOREMAN)) return;
   const idCell = objects.sheet.getRange(event.range.getRow(), getSystemColumn_('OBJECTS', H.RESPONSIBLE_FOREMAN_ID));
-  const value = String(event.value == null ? '' : event.value).trim();
+  const value = objectControlsText_(event.value);
   if (!value) { idCell.clearContent(); return; }
-  const employee = objectControlsForemen_().filter(function (item) { return item.label === value; })[0];
+  const normalizedValue = objectControlsNormalize_(value);
+  const employee = objectControlsForemen_().filter(function (item) {
+    return objectControlsNormalize_(item.name) === normalizedValue;
+  })[0];
   if (!employee) {
     idCell.clearContent();
     event.range.clearContent().setNote('Выберите сотрудника из выпадающего списка.');

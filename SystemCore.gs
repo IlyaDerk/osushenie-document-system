@@ -349,7 +349,7 @@ const SYSTEM_CONFIG = {
     OBJECTS: {
       name: 'Объекты',
       headerRow: 2,
-      dataStartRow: 4,
+      dataStartRow: 3,
       requiredHeaders: [
         H.OBJECT_ID,
         H.OBJECT_NAME,

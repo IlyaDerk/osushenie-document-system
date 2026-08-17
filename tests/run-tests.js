@@ -888,7 +888,7 @@ function operatorDictionaryContext(headers, dataStartRow, rows) {
 test('71. filter data reads shifted real objects, test foremen, and unique card statuses', () => {
   const ctx = baseContext();
   const contexts = {
-    OBJECTS: operatorDictionaryContext(['','ID объекта','Название'], 4, [
+    OBJECTS: operatorDictionaryContext(['','ID объекта','Название'], 3, [
       ['', '10', 'Дом 10'], ['', '2', 'Дом 2']
     ]),
     EMPLOYEES: operatorDictionaryContext(['','ID Сотрудника','ФИО сотрудника','Должность'], 5, [
@@ -1255,13 +1255,12 @@ test('107. approved foreman positions normalize case whitespace and NBSP', () =>
   const allowed=Array.from(vm.runInContext('SYSTEM_CONFIG.VALUES.FOREMAN_POSITIONS',ctx));
   assert.ok(allowed.includes('Главный инженер')); assert.ok(!allowed.includes('Бухгалтер'));
 });
-test('108. foreman labels keep duplicate names unambiguous and resolve ST-ID', () => {
+test('108. duplicate normalized foreman names with different ST-IDs fail safely', () => {
   const ctx=baseContext();
-  const rows=[['ST-1','Иванов','Главный инженер'],['ST-2','Иванов','Начальник Участка'],['ST-3','Петров','Бухгалтер']];
+  const rows=[['ST-1',' Иванов\u00a0Иван ','Главный инженер'],['ST-2','иванов  иван','Начальник Участка'],['ST-3','Петров','Бухгалтер']];
   ctx.getSystemSheetContext_=()=>({config:{dataStartRow:5},sheet:{getLastRow:()=>7,getRange:()=>({getValues:()=>rows})}});
   ctx.getSystemColumn_=(key,h)=>({'ID Сотрудника':1,'ФИО сотрудника':2,'Должность':3})[h];
-  const result=ctx.objectControlsForemen_();
-  assert.deepEqual(Array.from(result,x=>x.label),['Иванов [ST-1]','Иванов [ST-2]']);
+  assert.throws(()=>ctx.objectControlsForemen_(),/одинаковые ФИО.*ST-1, ST-2.*Невозможно однозначно определить ID/);
 });
 test('109. object statuses are centralized and preserve approved spelling', () => {
   const statuses=Array.from(vm.runInContext('SYSTEM_CONFIG.VALUES.OBJECT_STATUSES',baseContext()));
@@ -1270,6 +1269,38 @@ test('109. object statuses are centralized and preserve approved spelling', () =
 test('110. object synchronization still carries foreman name, ST-ID and status', () => {
   const text=fs.readFileSync('SyncObjectData.gs','utf8');
   assert.match(text,/H\.OBJECT_STATUS/); assert.match(text,/H\.RESPONSIBLE_FOREMAN/); assert.match(text,/H\.RESPONSIBLE_FOREMAN_ID/);
+});
+
+test('111. objects start at physical row 3 and modules use configured start rows', () => {
+  const ctx=baseContext();
+  assert.equal(vm.runInContext('SYSTEM_CONFIG.SHEETS.OBJECTS.dataStartRow',ctx),3);
+  for(const file of ['CreateObjectDocuments.gs','SyncObjectData.gs','OperatorCard.gs','ObjectSheetControls.gs']) {
+    const text=fs.readFileSync(file,'utf8');
+    assert.doesNotMatch(text,/OBJECTS[^\n]{0,120}dataStartRow\s*[:=]\s*4/);
+  }
+});
+test('112. foreman dropdown uses clean names only', () => {
+  const ctx=baseContext({SpreadsheetApp:{flush(){},newDataValidation(){const rule={requireValueInList(values){rule.values=values;return rule},setAllowInvalid(){return rule},build(){return rule}};return rule}}});
+  const rules=[]; const objects={config:{dataStartRow:3},sheet:{getMaxRows:()=>10,getRange:()=>({setDataValidation(rule){rules.push(rule)}}),hideColumns(){}}};
+  ctx.assertSystemSheetsStructure_=()=>{}; ctx.getSystemSheetContext_=key=>key==='OBJECTS'?objects:{};
+  ctx.objectControlsForemen_=()=>[{id:'ST-16',name:'Иванов Иван Иванович'}]; ctx.objectControlsEnsureStatuses_=()=>['На подготовке'];
+  ctx.getSystemColumn_=(key,h)=>h==='Ответственный прораб'?6:h==='Статус объекта'?7:5;
+  ctx.setupObjectSheetControls();
+  assert.deepEqual(Array.from(rules[0].values),['Иванов Иван Иванович']);
+  assert.ok(!rules[0].values[0].includes('[ST-'));
+});
+test('113. onEdit preserves clean FIO, writes ST-ID, and clearing FIO clears ID', () => {
+  const ctx=baseContext(); let fio=''; let id='OLD'; let note='';
+  const idCell={setValue(v){id=v;return this},clearContent(){id='';return this}};
+  const sheet={getSheetId:()=>10,getRange:()=>idCell};
+  const range={getNumRows:()=>1,getNumColumns:()=>1,getSheet:()=>sheet,getRow:()=>3,getColumn:()=>6,setValue(v){fio=v;return this},setNote(v){note=v;return this},clearContent(){fio='';return this}};
+  ctx.getSystemSheetContext_=()=>({config:{dataStartRow:3},sheet});
+  ctx.getSystemColumn_=(key,h)=>h==='Ответственный прораб'?6:5;
+  ctx.objectControlsForemen_=()=>[{id:'ST-16',name:'Иванов Иван Иванович'}];
+  ctx.onEdit({range,value:'Иванов Иван Иванович'});
+  assert.equal(fio,'Иванов Иван Иванович'); assert.equal(id,'ST-16'); assert.match(note,/ST-ID/);
+  ctx.onEdit({range,value:''}); assert.equal(id,'');
+  id='OLD'; fio='bad'; ctx.onEdit({range,value:'Неизвестный'}); assert.equal(id,''); assert.equal(fio,''); assert.match(note,/выпадающего списка/);
 });
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);
