@@ -89,7 +89,9 @@ function operatorCardGetFilterData_() {
   return {
     objects: objects,
     foremen: employees.filter(function (employee) {
-      return operatorCardFold_(employee.position) === operatorCardFold_(SYSTEM_CONFIG.VALUES.FOREMAN_POSITION);
+      return SYSTEM_CONFIG.VALUES.FOREMAN_POSITIONS.some(function (position) {
+        return operatorCardFold_(employee.position) === operatorCardFold_(position);
+      });
     }),
     employees: employees,
     clients: clients,
@@ -243,7 +245,7 @@ function operatorCardValidateHeaders_(documentsHeaders, cardHeaders, documentsNa
       const expected = operatorCardNormalizeText_(documentsHeaders[documentsStartIndex + index]);
       if (expected !== configured) throw new Error('Лист «' + documentsName + '», позиция ' + (index + 1) + ' рабочего блока: ожидается заголовок «' + configured + '», фактически «' + expected + '».');
     }
-    if (actual !== configured) throw new Error('Лист «' + cardName + '», позиция ' + (index + 1) + ' рабочего блока: ожидается заголовок «' + configured + '», фактически «' + actual + '».');
+    if (actual !== operatorCardNormalizeText_(configured)) throw new Error('Лист «' + cardName + '», позиция ' + (index + 1) + ' рабочего блока: ожидается заголовок «' + configured + '», фактически «' + actual + '».');
   }
   for (let index = cardStartIndex + expectedCount; index < cardHeaders.length; index++) {
     const actual = operatorCardNormalizeText_(cardHeaders[index]);
@@ -299,7 +301,19 @@ function operatorCardPrepareRows_(rows, indexes, filters, dateRange, dataStartRo
     warnings.push('ID документа «' + id + '» повторяется в активных строках ' + duplicateGroups[id].join(' и ') + '.');
   });
   if (invalidDates) warnings.push('Строк с некорректной датой создания пропущено: ' + invalidDates + '.');
-  return { activeCount: active.length, rows: selected, cardRows: selected.map(function (item) { const cardRow = item.row.slice(sourceStartIndex, sourceStartIndex + 24); cardRow[8] = operatorCardDisplayLabel_(cardRow[8], item.row[indexes.holderId]); cardRow[10] = operatorCardDisplayLabel_(cardRow[10], item.row[indexes.transferredById]); return cardRow.concat([item.row[indexes.recordStatus], item.sheetRow]); }), warnings: warnings, duplicateIdsCount: Object.keys(selectedDuplicateIds).length, invalidDatesCount: invalidDates };
+  const objectNames = {};
+  (dictionaries && dictionaries.objects || []).forEach(function (object) {
+    if (!object.isAllObjects) objectNames[operatorCardNormalizeText_(object.id)] = object.name;
+  });
+  return { activeCount: active.length, rows: selected, cardRows: selected.map(function (item) {
+    const cardRow = item.row.slice(sourceStartIndex, sourceStartIndex + 24);
+    cardRow[8] = operatorCardDisplayLabel_(cardRow[8], item.row[indexes.holderId]);
+    cardRow[10] = operatorCardDisplayLabel_(cardRow[10], item.row[indexes.transferredById]);
+    const objectId = operatorCardNormalizeText_(item.row[indexes.objectId]);
+    const objectName = objectNames[objectId] || '';
+    if (!objectName) warnings.push('Не удалось определить название объекта для ID «' + objectId + '»; поле «' + H.OBJECT_NAME + '» оставлено пустым.');
+    return cardRow.concat([objectName, item.row[indexes.recordStatus], item.sheetRow]);
+  }), warnings: warnings, duplicateIdsCount: Object.keys(selectedDuplicateIds).length, invalidDatesCount: invalidDates };
 }
 
 function operatorCardReplace_(cardContext, newRows) {
@@ -315,11 +329,13 @@ function operatorCardReplace_(cardContext, newRows) {
   const writeCount = Math.max(oldCount, newRows.length);
   if (!writeCount) return;
   const output = Array.from({ length: writeCount }, function (_, index) {
-    return index < newRows.length ? newRows[index].slice() : Array(26).fill('');
+    return index < newRows.length ? newRows[index].slice() : Array(27).fill('');
   });
-  sheet.getRange(start, cardStartColumn, writeCount, 26).setValues(output);
-  const technicalColumn = cardStartColumn + 25;
-  if (sheet.hideColumns) sheet.hideColumns(technicalColumn);
+  sheet.getRange(start, cardStartColumn, writeCount, 27).setValues(output);
+  if (sheet.hideColumns) {
+    sheet.hideColumns(cardStartColumn, 2);
+    sheet.hideColumns(cardStartColumn + 26);
+  }
 }
 
 function operatorCardComment_(filters, result, criticalError) {

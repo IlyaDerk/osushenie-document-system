@@ -139,7 +139,7 @@ const H = SYSTEM_HEADERS;
  * ============================================================
  */
 const SYSTEM_CONFIG = {
-  VERSION: '0.5.0',
+  VERSION: '0.6.0',
 
   /**
    * Максимальное время ожидания блокировки.
@@ -173,7 +173,19 @@ const SYSTEM_CONFIG = {
     OPERATOR_CARD_SAVE_OPERATION_TYPE: 'Сохранение изменений карточки операциониста',
 
     ALL_OBJECTS_LABEL: 'Все',
-    FOREMAN_POSITION: 'Экспедитор',
+    FOREMAN_POSITIONS: Object.freeze([
+      'Начальник Участка',
+      'Производитель работ (прораб)',
+      'Начальник ремонтно-технической базы',
+      'Главный инженер',
+      'Мастер строительно-монтажного участка'
+    ]),
+    OBJECT_STATUSES: Object.freeze([
+      'На подготовке',
+      'Передан заказчику',
+      'Требует исправления',
+      'Подписан с обеих сторон'
+    ]),
 
     CHANGE_ACTION_CREATE: 'Создание',
     CHANGE_ACTION_SYNC: 'Синхронизация',
@@ -274,6 +286,7 @@ const SYSTEM_CONFIG = {
         H.DOCUMENT_TYPE_ID,
         H.UPDATED_BY_EMAIL,
         H.RESPONSIBLE_FOREMAN,
+        H.OBJECT_NAME,
         H.RECORD_STATUS,
         H.FACT_ROW_NUMBER
       ]
@@ -328,6 +341,7 @@ const SYSTEM_CONFIG = {
         H.PAID,
         H.GU_FLAG,
         H.ORIGINAL_EDO,
+        H.OBJECT_STATUS,
         H.RECORD_STATUS
       ]
     },
@@ -410,12 +424,14 @@ const SYSTEM_CONFIG = {
     {
       cardHeader: H.DOCUMENT_ID,
       factHeader: H.DOCUMENT_ID,
-      editable: false
+      editable: false,
+      technical: true
     },
     {
       cardHeader: H.OBJECT_ID,
       factHeader: H.OBJECT_ID,
-      editable: false
+      editable: false,
+      technical: true
     },
     {
       cardHeader: H.DOCUMENT_TYPE,
@@ -532,6 +548,14 @@ const SYSTEM_CONFIG = {
       cardHeader: H.RESPONSIBLE_FOREMAN,
       factHeader: H.RESPONSIBLE_FOREMAN,
       editable: false
+    },
+    {
+      cardHeader: H.OBJECT_NAME,
+      factHeader: null,
+      editable: false,
+      derived: true,
+      sourceSheetKey: 'OBJECTS',
+      sourceHeader: H.OBJECT_NAME
     },
     { cardHeader: H.RECORD_STATUS, factHeader: H.RECORD_STATUS, editable: true },
     { cardHeader: H.FACT_ROW_NUMBER, factHeader: null, editable: false, technical: true }
@@ -879,7 +903,7 @@ function validateCardFieldMap_(result) {
       );
     }
 
-    if (!documentsResult.headers.includes(factHeader)) {
+    if (field.factHeader && !documentsResult.headers.includes(factHeader)) {
       result.errors.push(
         'В карте карточки указано поле факта «' +
         field.factHeader +

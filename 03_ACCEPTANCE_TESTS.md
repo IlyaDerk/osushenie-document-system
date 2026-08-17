@@ -154,3 +154,7 @@ email активного пользователя, визуальный вид H
 ## Save-stage карточки
 
 Проверить сценарии A–Q из `06_OPERATOR_CARD_SAVE_SPEC.md`, partial save для row/group-level ошибок, глобальную блокировку только при structural/write errors, optimistic conflict, employee/client holder, очистку технических ID, duplicate resolution по физическим строкам и отсутствие второй load-operation после refresh.
+
+## Контролируемые поля объектов
+
+Проверить скрытие ID карточки и отображение названия по ID, безопасный неизвестный ID, фильтрацию пяти должностей с case/space/NBSP-нормализацией, исключение иных должностей, выбор `ФИО [ST-ID]` при одинаковых ФИО, сохранение чистого ФИО/ST-ID, четыре утверждённых статуса и идемпотентный повторный `setupObjectSheetControls()`. После выбора повторить SyncObjectData и Operator Card save.
