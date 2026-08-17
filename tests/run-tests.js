@@ -110,7 +110,7 @@ function syncFixture(sourceValues, docs) {
   const ctx = baseContext();
   ctx.getSystemSpreadsheet_ = () => ({ getSpreadsheetTimeZone: () => 'UTC' });
   const headers = [
-    'ID документа', 'ID объекта', 'Статус записи', 'Номер договора', 'Статус объекта',
+    'ID документа', 'ID объекта', 'Название объекта', 'Статус записи', 'Номер договора', 'Статус объекта',
     'Дата начала работ', 'Дата окончания (по плану)', 'Дата окончания (по факту)',
     'Ответственный прораб', 'ID ответственного прораба', 'Дата обновления', 'Кто обновил (email)',
     'Дата изменения статуса документа'
@@ -132,7 +132,7 @@ function syncFixture(sourceValues, docs) {
   return { ctx, result, headers };
 }
 const baseline = {
-  'Номер договора': 'A-1', 'Статус объекта': 'В работе',
+  'Название объекта': 'Объект Альфа', 'Номер договора': 'A-1', 'Статус объекта': 'В работе',
   'Дата начала работ': '',
   'Дата окончания (по плану)': '',
   'Дата окончания (по факту)': '', 'Ответственный прораб': 'Иванов',
@@ -326,7 +326,7 @@ function creationPrepareFixture(count) {
   const ctx = baseContext();
   ctx.getSystemSpreadsheet_ = () => ({ getSpreadsheetTimeZone: () => 'UTC' });
   const headers = [
-    'ID документа','ID объекта','Тип документа','ID типа документа','Номер договора','Статус документа',
+    'ID документа','ID объекта','Название объекта','Тип документа','ID типа документа','Номер договора','Статус документа',
     'Статус объекта','Дата начала работ','Дата окончания (по плану)','Дата окончания (по факту)',
     'Дата создания','Дата обновления','Кто обновил (email)','Ответственный прораб','ID ответственного прораба',
     'Дата изменения статуса документа','Источник создания','Статус записи'
@@ -334,7 +334,7 @@ function creationPrepareFixture(count) {
   const context = { headers, headerMap: Object.fromEntries(headers.map((h, i) => [h, i + 1])) };
   const missing = Array.from({ length: count }, (_, i) => ({
     object: {
-      id: 'OBJ' + String(i + 1).padStart(2, '0'), contractNumber: 'DOG-' + (i + 1),
+      id: 'OBJ' + String(i + 1).padStart(2, '0'), name: 'Объект ' + (i + 1), contractNumber: 'DOG-' + (i + 1),
       objectStatus: 'В работе', workStartDate: new Date('2026-08-01T00:00:00Z'),
       workEndPlan: new Date('2026-08-31T00:00:00Z'), workEndFact: i === 0 ? new Date('2026-08-20T00:00:00Z') : '',
       responsibleForeman: 'Иванов', responsibleForemanId: 'ST-1'
@@ -358,7 +358,7 @@ test('24. 18 created documents produce 18 history rows, not field-per-value rows
 });
 test('25. initial creation snapshot contains main nonempty fields', () => {
   const snapshot = creationPrepareFixture(1).changeRows[0].newValue;
-  ['ID документа: DOC-OBJ01-0001','ID объекта: OBJ01','Тип документа: Акт','ID типа документа: DT-1',
+  ['ID документа: DOC-OBJ01-0001','ID объекта: OBJ01','Название объекта: Объект 1','Тип документа: Акт','ID типа документа: DT-1',
    'Номер договора: DOG-1','Статус документа: Ожидает заполнения','Статус объекта: В работе',
    'Дата начала работ:','Дата окончания (по плану):','Дата окончания (по факту):',
    'Ответственный прораб: Иванов','ID ответственного прораба: ST-1','Источник создания: Создание документов по объекту',
@@ -653,7 +653,7 @@ test('53. unknown IDs are rejected by server validation', () => {
 });
 test('54. header contract accepts extra fact columns but rejects reordering', () => {
   const ctx = baseContext();
-  const headers24 = ['ID документа','ID объекта','Тип документа','Номер договора','Дата документа','Статус документа','Оригинал / ЭДО','Комментарий','У кого документ','Где документ','Кто передал','Оплачен','Сумма документа','ГУ (Да/Нет)','Условия ГУ','Статус объекта','Дата начала работ','Дата окончания (по плану)','Дата окончания (по факту)','Дата создания','Дата обновления','ID типа документа','Кто обновил (email)','Ответственный прораб']; const headers=headers24.concat(['Название','Статус записи','Номер строки в таблице фактов']);
+  const headers24 = ['ID документа','ID объекта','Название объекта','Тип документа','Номер договора','Дата документа','Статус документа','Оригинал / ЭДО','Комментарий','У кого документ','Где документ','Кто передал','Оплачен','Сумма документа','ГУ (Да/Нет)','Условия ГУ','Статус объекта','Дата начала работ','Дата окончания (по плану)','Дата окончания (по факту)','Дата создания','Дата обновления','ID типа документа','Кто обновил (email)','Ответственный прораб']; const headers=headers24.concat(['Статус записи','Номер строки в таблице фактов']);
   assert.equal(ctx.operatorCardValidateHeaders_(headers.concat(['extra']), headers, 'Документы объектов', 'Карточка'), true);
   const swapped = headers.slice(); [swapped[0], swapped[1]] = [swapped[1], swapped[0]];
   assert.throws(() => ctx.operatorCardValidateHeaders_(swapped, headers, 'Документы объектов', 'Карточка'), /позиция 2/);
@@ -662,7 +662,7 @@ test('54. header contract accepts extra fact columns but rejects reordering', ()
 });
 test('55. active rows, combined ID filters and normalized status are applied', () => {
   const ctx = baseContext();
-  const indexes = { documentId:0, objectId:1, documentTypeId:2, documentStatus:3, holderId:4, foremanId:5, createdAt:6, recordStatus:7,transferredById:30 };
+  const indexes = { documentId:0, objectId:1, documentTypeId:2, documentStatus:3, holderId:4, foremanId:5, createdAt:6, recordStatus:7,transferredById:30,documentHolder:9,transferredBy:11 };
   const rows = [
     ['DOC-2','2','T1',' ГОТОВ ','E1','F1','', ' Активная '],
     ['DOC-3','2','T1','готов','E1','F1','', 'Архивная'],
@@ -673,13 +673,13 @@ test('55. active rows, combined ID filters and normalized status are applied', (
   assert.equal(result.activeCount,1); assert.equal(result.rows.length,1); assert.equal(result.cardRows[0].length,27);
 });
 test('56. natural sorting uses object, type, document and physical row', () => {
-  const ctx = baseContext(); const i={documentId:0,objectId:1,documentTypeId:2,documentStatus:3,holderId:4,foremanId:5,createdAt:6,recordStatus:7,transferredById:30};
+  const ctx = baseContext(); const i={documentId:0,objectId:1,documentTypeId:2,documentStatus:3,holderId:4,foremanId:5,createdAt:6,recordStatus:7,transferredById:30,documentHolder:9,transferredBy:11};
   const rows=[['DOC-10','2','10','','','','','Активная'],['DOC-2','2','2','','','','','Активная'],['DOC-1','10','1','','','','','Активная']]; rows.forEach(r=>{while(r.length<31)r.push('')});
   const result=ctx.operatorCardPrepareRows_(rows,i,ctx.operatorCardNormalizeFilters_({}),{active:false},4);
   assert.deepEqual(Array.from(result.rows,x=>x.row[0]),['DOC-2','DOC-10','DOC-1']);
 });
 test('57. active duplicate group is retained and reports physical rows once per ID', () => {
-  const ctx=baseContext(); const i={documentId:0,objectId:1,documentTypeId:2,documentStatus:3,holderId:4,foremanId:5,createdAt:6,recordStatus:7,transferredById:30};
+  const ctx=baseContext(); const i={documentId:0,objectId:1,documentTypeId:2,documentStatus:3,holderId:4,foremanId:5,createdAt:6,recordStatus:7,transferredById:30,documentHolder:9,transferredBy:11};
   const rows=[['D1','A','','','','','','Активная'],['D1','B','','','','','','Активная'],['D1','A','','','','','','Архивная']]; rows.forEach(r=>{while(r.length<31)r.push('')});
   const result=ctx.operatorCardPrepareRows_(rows,i,ctx.operatorCardNormalizeFilters_({object:{allObjects:false,objectId:'A'}}),{active:false},18);
   assert.equal(result.rows.length,1); assert.equal(result.duplicateIdsCount,1); assert.match(result.warnings[0],/18 и 19/); assert.doesNotMatch(result.warnings[0],/20/);
@@ -717,7 +717,7 @@ test('62. inclusive date boundaries use spreadsheet timezone and next calendar d
   assert.doesNotMatch(fs.readFileSync('OperatorCard.gs','utf8'),/24\s*\*\s*60\s*\*\s*60|86400000/);
 });
 test('63. active date filter excludes blank and warns about invalid nonblank dates', () => {
-  const ctx=baseContext(); const i={documentId:0,objectId:1,documentTypeId:2,documentStatus:3,holderId:4,foremanId:5,createdAt:6,recordStatus:7,transferredById:30};
+  const ctx=baseContext(); const i={documentId:0,objectId:1,documentTypeId:2,documentStatus:3,holderId:4,foremanId:5,createdAt:6,recordStatus:7,transferredById:30,documentHolder:9,transferredBy:11};
   const valid=vm.runInContext("new Date('2026-08-10T12:00:00Z')",ctx);
   const rows=[['A','','','','','',valid,'Активная'],['B','','','','','','','Активная'],['C','','','','','','bad','Активная']];rows.forEach(r=>{while(r.length<31)r.push('')});
   const range=ctx.operatorCardParseDateRange_('2026-08-10','2026-08-10','UTC');
@@ -726,8 +726,8 @@ test('63. active date filter excludes blank and warns about invalid nonblank dat
 });
 
 
-const operatorWorkflowCardHeaders = ['ID документа','ID объекта','Тип документа','Номер договора','Дата документа','Статус документа','Оригинал / ЭДО','Комментарий','У кого документ','Где документ','Кто передал','Оплачен','Сумма документа','ГУ (Да/Нет)','Условия ГУ','Статус объекта','Дата начала работ','Дата окончания (по плану)','Дата окончания (по факту)','Дата создания','Дата обновления','ID типа документа','Кто обновил (email)','Ответственный прораб'].concat(['Название','Статус записи','Номер строки в таблице фактов']);
-const operatorWorkflowDocumentHeaders = operatorWorkflowCardHeaders.slice(0,24).concat(['ID сотрудника — у кого документ','ID сотрудника — кто передал','ID ответственного прораба','Дата изменения статуса документа','Отчётный период','Источник создания','Статус записи']);
+const operatorWorkflowCardHeaders = ['ID документа','ID объекта','Название объекта','Тип документа','Номер договора','Дата документа','Статус документа','Оригинал / ЭДО','Комментарий','У кого документ','Где документ','Кто передал','Оплачен','Сумма документа','ГУ (Да/Нет)','Условия ГУ','Статус объекта','Дата начала работ','Дата окончания (по плану)','Дата окончания (по факту)','Дата создания','Дата обновления','ID типа документа','Кто обновил (email)','Ответственный прораб'].concat(['Статус записи','Номер строки в таблице фактов']);
+const operatorWorkflowDocumentHeaders = operatorWorkflowCardHeaders.slice(0,25).concat(['ID сотрудника — у кого документ','ID сотрудника — кто передал','ID ответственного прораба','Дата изменения статуса документа','Отчётный период','Источник создания','Статус записи']);
 const operatorWorkflowOperationHeaders = ['ID операции','Дата и время начала','Дата и время завершения','Кто запустил (email)','Источник операции','Тип операции','Статус операции','Документов загружено в карточку','Документов с изменениями','Строк факта обновлено','Полей изменено','Дублирующихся ID найдено','Ошибок','Время выполнения, сек.','Текст ошибки / комментарий'];
 
 function operatorWorkflowFixture(options = {}) {
@@ -848,7 +848,8 @@ test('70. shifted facts and independently shifted card use their ID-document sta
     documentId: physicalIndexes['ID документа'], objectId: physicalIndexes['ID объекта'],
     documentTypeId: physicalIndexes['ID типа документа'], documentStatus: physicalIndexes['Статус документа'],
     holderId: physicalIndexes['ID сотрудника — у кого документ'], foremanId: physicalIndexes['ID ответственного прораба'],
-    createdAt: physicalIndexes['Дата создания'], recordStatus: physicalIndexes['Статус записи'], transferredById: physicalIndexes['ID сотрудника — кто передал']
+    createdAt: physicalIndexes['Дата создания'], recordStatus: physicalIndexes['Статус записи'], transferredById: physicalIndexes['ID сотрудника — кто передал'],
+    documentHolder: physicalIndexes['У кого документ'], transferredBy: physicalIndexes['Кто передал']
   }, ctx.operatorCardNormalizeFilters_({}), {active:false}, 4, 1);
   assert.equal(prepared.cardRows.length, 1);
   assert.equal(prepared.cardRows[0].length, 27);
@@ -888,7 +889,7 @@ function operatorDictionaryContext(headers, dataStartRow, rows) {
 test('71. filter data reads shifted real objects, test foremen, and unique card statuses', () => {
   const ctx = baseContext();
   const contexts = {
-    OBJECTS: operatorDictionaryContext(['','ID объекта','Название'], 3, [
+    OBJECTS: operatorDictionaryContext(['','ID объекта','Название объекта'], 3, [
       ['', '10', 'Дом 10'], ['', '2', 'Дом 2']
     ]),
     EMPLOYEES: operatorDictionaryContext(['','ID Сотрудника','ФИО сотрудника','Должность'], 5, [
@@ -1008,7 +1009,7 @@ test('76. empty sidebar filter contract means all objects and no additional rest
   assert.equal(filters.object.allObjects,true);
   assert.equal(filters.foremanId,''); assert.equal(filters.documentStatus,'');
   assert.equal(filters.documentTypeId,''); assert.equal(filters.holderId,'');
-  const indexes={documentId:0,objectId:1,documentTypeId:2,documentStatus:3,holderId:4,foremanId:5,createdAt:6,recordStatus:7,transferredById:30};
+  const indexes={documentId:0,objectId:1,documentTypeId:2,documentStatus:3,holderId:4,foremanId:5,createdAt:6,recordStatus:7,transferredById:30,documentHolder:9,transferredBy:11};
   const rows=[['D1','OBJ1','T1','Подписан','E1','F1','','Активная'],['D2','OBJ2','T2','Новый','E2','F2','','Активная']];
   rows.forEach(row=>{while(row.length<31)row.push('')});
   const result=ctx.operatorCardPrepareRows_(rows,indexes,filters,{active:false},4,0);
@@ -1019,17 +1020,17 @@ test('77. save card contract has unchanged first 24 fields plus status and physi
   const ctx=baseContext(); const headers=Array.from(ctx.SYSTEM_CONFIG ? ctx.SYSTEM_CONFIG.SHEETS.OPERATOR_CARD.requiredHeaders : []);
   // top-level const is lexical in vm; inspect source for the runtime contract instead.
   const text=fs.readFileSync('SystemCore.gs','utf8');
-  assert.match(text,/H\.RESPONSIBLE_FOREMAN,\s*H\.OBJECT_NAME,\s*H\.RECORD_STATUS,\s*H\.FACT_ROW_NUMBER/);
+  assert.match(text,/H\.RESPONSIBLE_FOREMAN,\s*H\.RECORD_STATUS,\s*H\.FACT_ROW_NUMBER/);
   assert.match(text,/cardHeader: H\.CONTRACT_NUMBER,[\s\S]{0,80}editable: false/);
 });
 test('78. save endpoint is thin and critical workflow uses document lock', () => {
   assert.match(fs.readFileSync('Code.gs','utf8'),/saveOperatorCardChanges\(filters\)[\s\S]*return operatorCardSave_\(filters\)/);
   assert.match(fs.readFileSync('OperatorCardSave.gs','utf8'),/withDocumentLock_\(function/);
 });
-test('79. loader writes physical row and record status without slicing a 25th fact field', () => {
+test('79. loader copies 25 fact fields then appends status and physical row', () => {
   const text=fs.readFileSync('OperatorCard.gs','utf8');
-  assert.match(text,/slice\(sourceStartIndex, sourceStartIndex \+ 24\)/);
-  assert.match(text,/concat\(\[objectName, item\.row\[indexes\.recordStatus\], item\.sheetRow\]\)/);
+  assert.match(text,/slice\(sourceStartIndex, sourceStartIndex \+ 25\)/);
+  assert.match(text,/concat\(\[item\.row\[indexes\.recordStatus\], item\.sheetRow\]\)/);
   assert.match(text,/hideColumns\(cardStartColumn, 2\)/);
 });
 test('80. holder dictionary is employee then client and labels contain IDs', () => {
@@ -1074,7 +1075,7 @@ function partialSaveFixture(ctx, options = {}) {
   const documentId = options.documentId || 'DOC-1';
   const factRow = options.factRow || 10;
   const base = {
-    'ID документа':documentId,'ID объекта':'OBJ-1','ID типа документа':'TYPE-1',
+    'ID документа':documentId,'ID объекта':'OBJ-1','Название объекта':'Объект Альфа','ID типа документа':'TYPE-1',
     'Тип документа':'Акт','Номер договора':'CN-1','Дата документа':'',
     'Статус документа':'Новый','Оригинал / ЭДО':'Оригинал','Комментарий':'old',
     'У кого документ':'','Где документ':'Офис','Кто передал':'','Оплачен':'Нет',
@@ -1243,11 +1244,12 @@ test('105. document and object IDs remain hidden technical card fields', () => {
   assert.equal(map.find(x => x.cardHeader === 'ID объекта').technical, true);
   assert.match(fs.readFileSync('OperatorCard.gs','utf8'), /hideColumns\(cardStartColumn, 2\)/);
 });
-test('106. object name is derived by object ID and unknown ID is safe', () => {
-  const ctx=baseContext(); const i={documentId:0,objectId:1,documentTypeId:2,documentStatus:3,holderId:4,foremanId:5,createdAt:6,recordStatus:7,transferredById:30};
-  const rows=[['D1','OBJ-1','','','','','','Активная'],['D2','UNKNOWN','','','','','','Активная']]; rows.forEach(r=>{while(r.length<31)r.push('')});
-  const result=ctx.operatorCardPrepareRows_(rows,i,ctx.operatorCardNormalizeFilters_({}),{active:false},4,0,{objects:[{id:'OBJ-1',name:'Башня'}]});
-  assert.equal(result.cardRows[0][24],'Башня'); assert.equal(result.cardRows[1][24],''); assert.match(result.warnings.join(' '),/UNKNOWN/);
+test('106. object name is read directly from the fact row', () => {
+  const ctx=baseContext(); const i={documentId:0,objectId:1,documentTypeId:22,documentStatus:6,holderId:25,foremanId:27,createdAt:20,recordStatus:31,transferredById:26,documentHolder:9,transferredBy:11};
+  const row=['D1','OBJ-1','Башня']; while(row.length<32) row.push(''); row[31]='Активная';
+  const result=ctx.operatorCardPrepareRows_([row],i,ctx.operatorCardNormalizeFilters_({}),{active:false},4,0,{});
+  assert.equal(result.cardRows[0][2],'Башня');
+  assert.doesNotMatch(fs.readFileSync('OperatorCard.gs','utf8'),/objectNames|Не удалось определить название объекта/);
 });
 test('107. approved foreman positions normalize case whitespace and NBSP', () => {
   const ctx=baseContext();
@@ -1301,6 +1303,34 @@ test('113. onEdit preserves clean FIO, writes ST-ID, and clearing FIO clears ID'
   assert.equal(fio,'Иванов Иван Иванович'); assert.equal(id,'ST-16'); assert.match(note,/ST-ID/);
   ctx.onEdit({range,value:''}); assert.equal(id,'');
   id='OLD'; fio='bad'; ctx.onEdit({range,value:'Неизвестный'}); assert.equal(id,''); assert.equal(fio,''); assert.match(note,/выпадающего списка/);
+});
+
+test('114. final object-name contracts match physical sheets', () => {
+  const ctx=baseContext();
+  assert.equal(vm.runInContext('H.OBJECT_NAME',ctx),'Название объекта');
+  const documents=Array.from(vm.runInContext('SYSTEM_CONFIG.SHEETS.DOCUMENTS.requiredHeaders',ctx));
+  const card=Array.from(vm.runInContext('SYSTEM_CONFIG.SHEETS.OPERATOR_CARD.requiredHeaders',ctx));
+  assert.equal(documents.length,32); assert.equal(documents[2],'Название объекта');
+  assert.equal(card.length,27); assert.equal(card[2],'Название объекта');
+  assert.deepEqual(card.slice(0,25),documents.slice(0,25));
+});
+test('115. creation writes object name and sync histories name changes', () => {
+  const created=creationPrepareFixture(1); const headers=['ID документа','ID объекта','Название объекта','Тип документа','Номер договора','Статус документа','Статус объекта','Дата начала работ','Дата окончания (по плану)','Дата окончания (по факту)','Дата создания','Дата обновления','Кто обновил (email)','Ответственный прораб','ID ответственного прораба','Дата изменения статуса документа','Источник создания','Статус записи'];
+  assert.equal(created.documentRows[0][headers.indexOf('Название объекта')],'Объект 1');
+  const fixture=syncFixture(Object.assign({},baseline,{'Название объекта':'Новое имя'}),[document()]);
+  const change=fixture.result.changes.find(item=>item.fieldName==='Название объекта');
+  assert.ok(change); assert.equal(change.oldValue,'Объект Альфа'); assert.equal(change.newValue,'Новое имя');
+});
+test('116. object name is a normal read-only fact field', () => {
+  const ctx=baseContext(); const mapping=Array.from(vm.runInContext('SYSTEM_CONFIG.CARD_FIELD_MAP',ctx)).find(item=>item.cardHeader==='Название объекта');
+  assert.equal(mapping.factHeader,'Название объекта'); assert.equal(mapping.editable,false); assert.equal(mapping.derived,undefined);
+  assert.doesNotMatch(fs.readFileSync('OperatorCardSave.gs','utf8'),/mapping\.derived/);
+  const changed=partialSaveFixture(ctx,{card:{'Название объекта':'Подмена'}});
+  const rejected=ctx.operatorCardBuildSavePlan_([changed.card],[changed.fact],partialDictionaries(),new Date(),'x@x','OP-20260804-0001');
+  assert.equal(rejected.rows.length,0); assert.match(rejected.rowErrors[0].message,/Название объекта/);
+  const editable=partialSaveFixture(ctx,{card:{'Комментарий':'new'}});
+  const accepted=ctx.operatorCardBuildSavePlan_([editable.card],[editable.fact],partialDictionaries(),new Date(),'x@x','OP-20260804-0002');
+  assert.equal(accepted.rows.length,1);
 });
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);

@@ -144,7 +144,7 @@ function operatorCardBuildSavePlan_(cardItems, factItems, dictionaries, now, ema
         return !operatorCardSaveEqual_(card.values[header], factValue);
       });
       const changedReadOnlyHeaders = SYSTEM_CONFIG.CARD_FIELD_MAP.filter(function (mapping) {
-        return !mapping.editable && !mapping.technical && !mapping.derived &&
+        return !mapping.editable && !mapping.technical &&
           mapping.cardHeader !== H.UPDATED_AT && mapping.cardHeader !== H.UPDATED_BY_EMAIL &&
           !operatorCardSaveEqual_(card.values[mapping.cardHeader], fact.values[mapping.factHeader]);
       }).map(function (mapping) {

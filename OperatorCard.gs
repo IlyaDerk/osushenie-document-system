@@ -241,7 +241,7 @@ function operatorCardValidateHeaders_(documentsHeaders, cardHeaders, documentsNa
   for (let index = 0; index < expectedCount; index++) {
     const configured = SYSTEM_CONFIG.SHEETS.OPERATOR_CARD.requiredHeaders[index];
     const actual = operatorCardNormalizeText_(cardHeaders[cardStartIndex + index]);
-    if (index < 24) {
+    if (index < 25) {
       const expected = operatorCardNormalizeText_(documentsHeaders[documentsStartIndex + index]);
       if (expected !== configured) throw new Error('Лист «' + documentsName + '», позиция ' + (index + 1) + ' рабочего блока: ожидается заголовок «' + configured + '», фактически «' + expected + '».');
     }
@@ -249,7 +249,7 @@ function operatorCardValidateHeaders_(documentsHeaders, cardHeaders, documentsNa
   }
   for (let index = cardStartIndex + expectedCount; index < cardHeaders.length; index++) {
     const actual = operatorCardNormalizeText_(cardHeaders[index]);
-    if (actual) throw new Error('Лист «' + cardName + '», физическая колонка ' + (index + 1) + ': ожидается пустой заголовок после утверждённых 26 полей, фактически «' + actual + '».');
+    if (actual) throw new Error('Лист «' + cardName + '», физическая колонка ' + (index + 1) + ': ожидается пустой заголовок после утверждённых 27 полей, фактически «' + actual + '».');
   }
   return true;
 }
@@ -301,18 +301,11 @@ function operatorCardPrepareRows_(rows, indexes, filters, dateRange, dataStartRo
     warnings.push('ID документа «' + id + '» повторяется в активных строках ' + duplicateGroups[id].join(' и ') + '.');
   });
   if (invalidDates) warnings.push('Строк с некорректной датой создания пропущено: ' + invalidDates + '.');
-  const objectNames = {};
-  (dictionaries && dictionaries.objects || []).forEach(function (object) {
-    if (!object.isAllObjects) objectNames[operatorCardNormalizeText_(object.id)] = object.name;
-  });
   return { activeCount: active.length, rows: selected, cardRows: selected.map(function (item) {
-    const cardRow = item.row.slice(sourceStartIndex, sourceStartIndex + 24);
-    cardRow[8] = operatorCardDisplayLabel_(cardRow[8], item.row[indexes.holderId]);
-    cardRow[10] = operatorCardDisplayLabel_(cardRow[10], item.row[indexes.transferredById]);
-    const objectId = operatorCardNormalizeText_(item.row[indexes.objectId]);
-    const objectName = objectNames[objectId] || '';
-    if (!objectName) warnings.push('Не удалось определить название объекта для ID «' + objectId + '»; поле «' + H.OBJECT_NAME + '» оставлено пустым.');
-    return cardRow.concat([objectName, item.row[indexes.recordStatus], item.sheetRow]);
+    const cardRow = item.row.slice(sourceStartIndex, sourceStartIndex + 25);
+    cardRow[indexes.documentHolder - sourceStartIndex] = operatorCardDisplayLabel_(item.row[indexes.documentHolder], item.row[indexes.holderId]);
+    cardRow[indexes.transferredBy - sourceStartIndex] = operatorCardDisplayLabel_(item.row[indexes.transferredBy], item.row[indexes.transferredById]);
+    return cardRow.concat([item.row[indexes.recordStatus], item.sheetRow]);
   }), warnings: warnings, duplicateIdsCount: Object.keys(selectedDuplicateIds).length, invalidDatesCount: invalidDates };
 }
 
@@ -398,7 +391,8 @@ function operatorCardApply_(rawFilters, suppressJournal) {
       result = operatorCardPrepareRows_(rows, {
         documentId: index(H.DOCUMENT_ID), objectId: index(H.OBJECT_ID), documentTypeId: index(H.DOCUMENT_TYPE_ID),
         documentStatus: index(H.DOCUMENT_STATUS), holderId: index(H.HOLDER_EMPLOYEE_ID), foremanId: index(H.RESPONSIBLE_FOREMAN_ID),
-        createdAt: index(H.CREATED_AT), recordStatus: index(H.RECORD_STATUS), transferredById: index(H.TRANSFERRED_BY_EMPLOYEE_ID)
+        createdAt: index(H.CREATED_AT), recordStatus: index(H.RECORD_STATUS), transferredById: index(H.TRANSFERRED_BY_EMPLOYEE_ID),
+        documentHolder: index(H.DOCUMENT_HOLDER), transferredBy: index(H.TRANSFERRED_BY)
       }, filters, range, documents.config.dataStartRow, documentsStartColumn - 1, dictionaries);
       result.loadedCount = result.cardRows.length;
       operatorCardApplyValidations_(card, operatorCardGetValidationData_(dictionaries));

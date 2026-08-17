@@ -56,7 +56,7 @@ const SYSTEM_HEADERS = Object.freeze({
   GU_TERMS: 'Условия ГУ',
 
   // Данные объекта
-  OBJECT_NAME: 'Название',
+  OBJECT_NAME: 'Название объекта',
   OBJECT_ADDRESS: 'Адрес',
   OBJECT_STATUS: 'Статус объекта',
   WORK_START_DATE: 'Дата начала работ',
@@ -264,6 +264,7 @@ const SYSTEM_CONFIG = {
       requiredHeaders: [
         H.DOCUMENT_ID,
         H.OBJECT_ID,
+        H.OBJECT_NAME,
         H.DOCUMENT_TYPE,
         H.CONTRACT_NUMBER,
         H.DOCUMENT_DATE,
@@ -286,7 +287,6 @@ const SYSTEM_CONFIG = {
         H.DOCUMENT_TYPE_ID,
         H.UPDATED_BY_EMAIL,
         H.RESPONSIBLE_FOREMAN,
-        H.OBJECT_NAME,
         H.RECORD_STATUS,
         H.FACT_ROW_NUMBER
       ]
@@ -299,6 +299,7 @@ const SYSTEM_CONFIG = {
       requiredHeaders: [
         H.DOCUMENT_ID,
         H.OBJECT_ID,
+        H.OBJECT_NAME,
         H.DOCUMENT_TYPE,
         H.CONTRACT_NUMBER,
         H.DOCUMENT_DATE,
@@ -418,7 +419,7 @@ const SYSTEM_CONFIG = {
    * editable: false — поле предназначено только для просмотра.
    *
    * Карта описывает контракт полей для будущего редактирования. Чтение
-   * карточки берёт первые 24 поля непосредственно из «Документы объектов».
+   * карточки берёт первые 25 полей непосредственно из «Документы объектов».
    */
   CARD_FIELD_MAP: [
     {
@@ -432,6 +433,11 @@ const SYSTEM_CONFIG = {
       factHeader: H.OBJECT_ID,
       editable: false,
       technical: true
+    },
+    {
+      cardHeader: H.OBJECT_NAME,
+      factHeader: H.OBJECT_NAME,
+      editable: false
     },
     {
       cardHeader: H.DOCUMENT_TYPE,
@@ -548,14 +554,6 @@ const SYSTEM_CONFIG = {
       cardHeader: H.RESPONSIBLE_FOREMAN,
       factHeader: H.RESPONSIBLE_FOREMAN,
       editable: false
-    },
-    {
-      cardHeader: H.OBJECT_NAME,
-      factHeader: null,
-      editable: false,
-      derived: true,
-      sourceSheetKey: 'OBJECTS',
-      sourceHeader: H.OBJECT_NAME
     },
     { cardHeader: H.RECORD_STATUS, factHeader: H.RECORD_STATUS, editable: true },
     { cardHeader: H.FACT_ROW_NUMBER, factHeader: null, editable: false, technical: true }

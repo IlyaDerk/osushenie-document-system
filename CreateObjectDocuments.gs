@@ -531,6 +531,7 @@ function prepareDocumentRows_(
     const values = {};
     values[H.DOCUMENT_ID] = documentId;
     values[H.OBJECT_ID] = item.object.id;
+    values[H.OBJECT_NAME] = item.object.name;
     values[H.DOCUMENT_TYPE] = item.rule.name;
     values[H.CONTRACT_NUMBER] = item.object.contractNumber;
     values[H.DOCUMENT_STATUS] =
@@ -605,6 +606,7 @@ function buildCreationInitialSnapshot_(values) {
   const snapshotHeaders = [
     H.DOCUMENT_ID,
     H.OBJECT_ID,
+    H.OBJECT_NAME,
     H.DOCUMENT_TYPE,
     H.DOCUMENT_TYPE_ID,
     H.CONTRACT_NUMBER,
