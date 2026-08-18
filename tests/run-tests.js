@@ -46,6 +46,9 @@ function baseContext(extra = {}) {
     PropertiesService: {
       getDocumentProperties() {
         return extra.properties || { getProperty() { return null; }, setProperty() {} };
+      },
+      getScriptProperties() {
+        return extra.scriptProperties || { getProperty() { return null; }, setProperty() {}, deleteProperty() {} };
       }
     },
     SpreadsheetApp: extra.SpreadsheetApp || { flush() {} },
@@ -1414,11 +1417,12 @@ test('122. identity mismatch never restores from another physical fact row', () 
 
 function webAuthFixture(users) {
   const values = {};
-  const cache = { get(key) { return values[key] || null; }, put(key, value) { values[key] = value; }, remove(key) { delete values[key]; } };
-  const ctx = baseContext({ CacheService: { getScriptCache() { return cache; } } });
+  const properties = { getProperty(key) { return values[key] || null; }, setProperty(key, value) { values[key] = value; }, deleteProperty(key) { delete values[key]; } };
+  const state = { users: users };
+  const ctx = baseContext({ scriptProperties: properties });
   ctx.Utilities.getUuid = () => 'uuid-' + Object.keys(values).length;
-  ctx.webAppReadUsers_ = () => users;
-  return { ctx, values };
+  ctx.webAppReadUsers_ = () => state.users;
+  return { ctx, values, state };
 }
 test('123. web login accepts enabled user and never returns password', () => {
   const fixture = webAuthFixture([{ login:'irina',password:'Secret',fullName:'Ирина',contact:'irina@work',access:'Да' }]);
@@ -1438,10 +1442,13 @@ test('125. duplicate web login is blocked and contact falls back to login', () =
   assert.throws(() => webAuthFixture(users).ctx.webAppLogin('irina','a'), /повторяющийся логин/);
   assert.equal(webAuthFixture([]).ctx.webAppPublicUser_({login:'user',fullName:'',contact:''}).actor, 'user');
 });
-test('126. web sessions expire, renew and can be removed', () => {
+test('126. web sessions persist without expiry and logout removes them', () => {
   const fixture=webAuthFixture([{login:'u',password:'p',fullName:'U',contact:'',access:'Да'}]);
   const result=fixture.ctx.webAppLogin('u','p'); assert.equal(fixture.ctx.webAppRequireSession_(result.token).login,'u');
-  fixture.ctx.webAppLogout(result.token); assert.throws(()=>fixture.ctx.webAppRequireSession_(result.token),/Сессия истекла/);
+  assert.deepEqual(JSON.parse(Object.values(fixture.values)[0]),{login:'u'});
+  assert.ok(!JSON.stringify(fixture.values).includes('"password"'));
+  assert.equal(fixture.ctx.webAppRequireSession_(result.token).login,'u');
+  fixture.ctx.webAppLogout(result.token); assert.throws(()=>fixture.ctx.webAppRequireSession_(result.token),/Сессия недействительна/);
 });
 test('127. web configuration is centralized and excludes special object', () => {
   const ctx=baseContext(); const config=vm.runInContext('SYSTEM_CONFIG',ctx); const headers=vm.runInContext('SYSTEM_HEADERS',ctx);
@@ -1484,6 +1491,46 @@ test('132. web HTML uses safe DOM output, sessionStorage and exact payload', () 
   const html=fs.readFileSync('DocumentWebApp.html','utf8'); assert.doesNotMatch(html,/\.innerHTML\s*=/); assert.match(html,/textContent/); assert.match(html,/sessionStorage/);
   assert.match(html,/\{ objectId: el\('object'\)\.value, documentTypeId: el\('documentType'\)\.value, documentStatus: el\('status'\)\.value \}/);
   assert.doesNotMatch(fs.readFileSync('WebAppAuth.gs','utf8'),/return\s+\{[^}]*password/);
+});
+test('133. protected request refreshes current contact and falls back to login', () => {
+  const fixture=webAuthFixture([{login:'u',password:'p',fullName:'Old',contact:'old@work',access:'Да'}]);
+  const token=fixture.ctx.webAppLogin('u','p').token;
+  fixture.state.users=[{login:'u',password:'changed',fullName:'New',contact:'new@work',access:'Да'}];
+  assert.equal(fixture.ctx.webAppRequireSession_(token).actor,'new@work');
+  fixture.state.users=[{login:'u',password:'changed',fullName:'New',contact:'',access:'Да'}];
+  assert.equal(fixture.ctx.webAppRequireSession_(token).actor,'u');
+});
+test('134. revoked access deletes the server session permanently', () => {
+  const fixture=webAuthFixture([{login:'u',password:'p',fullName:'U',contact:'',access:'Да'}]);
+  const token=fixture.ctx.webAppLogin('u','p').token;
+  fixture.state.users=[{login:'u',password:'p',fullName:'U',contact:'',access:'Нет'}];
+  assert.throws(()=>fixture.ctx.webAppRequireSession_(token),/Доступ.*прекращён/); assert.equal(Object.keys(fixture.values).length,0);
+  fixture.state.users=[{login:'u',password:'p',fullName:'U',contact:'',access:'Да'}];
+  assert.throws(()=>fixture.ctx.webAppRequireSession_(token),/Сессия недействительна/);
+});
+test('135. missing user and duplicate login both revoke and delete sessions', () => {
+  for(const replacement of [[],[{login:'u',password:'p',fullName:'1',contact:'',access:'Да'},{login:'u',password:'p',fullName:'2',contact:'',access:'Да'}]]) {
+    const fixture=webAuthFixture([{login:'u',password:'p',fullName:'U',contact:'',access:'Да'}]); const token=fixture.ctx.webAppLogin('u','p').token;
+    fixture.state.users=replacement; assert.throws(()=>fixture.ctx.webAppRequireSession_(token),/Доступ.*прекращён/); assert.equal(Object.keys(fixture.values).length,0);
+  }
+});
+test('136. session storage uses Script Properties without expiry or CacheService', () => {
+  const text=fs.readFileSync('WebAppAuth.gs','utf8'); assert.match(text,/PropertiesService\.getScriptProperties\(\)/);
+  assert.match(text,/\.setProperty\(/); assert.match(text,/\.deleteProperty\(/); assert.doesNotMatch(text,/CacheService|SESSION_SECONDS|setProperty\([^)]*,[^)]*,/);
+});
+test('137. document creation rechecks access inside lock and revoked access writes nothing', () => {
+  const ctx=baseContext(); let checks=0, locked=false, touched=false;
+  ctx.webAppRequireSession_=()=>{ checks++; if(checks===1)return {actor:'old'}; assert.equal(locked,true); throw new Error('Доступ к приложению прекращён. Войдите снова.'); };
+  ctx.withDocumentLock_=callback=>{locked=true;return callback();};
+  ctx.assertSystemSheetsStructure_=()=>{touched=true;}; ctx.getSystemSheetContext_=()=>{touched=true;};
+  assert.throws(()=>ctx.webAppCreateDocument('token',{}),/Доступ.*прекращён/); assert.equal(checks,2); assert.equal(touched,false);
+  const text=fs.readFileSync('DocumentWebApp.gs','utf8'); const start=text.indexOf('function webAppCreateDocument'); const lock=text.indexOf('withDocumentLock_',start); const second=text.indexOf('webAppRequireSession_',lock); assert.ok(second>lock);
+});
+test('138. client removes revoked tokens, returns to login and never retries create', () => {
+  const html=fs.readFileSync('DocumentWebApp.html','utf8'); assert.match(html,/function handleSessionError[\s\S]*sessionStorage\.removeItem\('documentWebToken'\)[\s\S]*showLogin/);
+  assert.match(html,/Доступ к приложению прекращён/); assert.match(html,/Сессия недействительна/);
+  const createHandler=html.slice(html.indexOf("el('documentForm').addEventListener"),html.indexOf("el('logout').addEventListener"));
+  assert.equal((createHandler.match(/webAppCreateDocument/g)||[]).length,1); assert.doesNotMatch(createHandler,/setTimeout|retry|повтор/i);
 });
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);

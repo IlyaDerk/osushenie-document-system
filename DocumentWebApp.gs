@@ -49,9 +49,10 @@ function webAppGetExistingDocuments(sessionToken, objectId, documentTypeId) {
 }
 
 function webAppCreateDocument(sessionToken, payload) {
-  const user = webAppRequireSession_(sessionToken);
+  webAppRequireSession_(sessionToken);
   const startedAt = new Date();
   return withDocumentLock_(function () {
+    const user = webAppRequireSession_(sessionToken);
     let operationId = '';
     let factWritten = false;
     let changeWritten = false;
