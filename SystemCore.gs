@@ -136,6 +136,7 @@ const SYSTEM_HEADERS = Object.freeze({
  * Короткое имя для использования в конфигурации.
  */
 const H = SYSTEM_HEADERS;
+const SYSTEM_SPREADSHEET_ID_PROPERTY_ = 'SYSTEM_SPREADSHEET_ID';
 
 
 /**
@@ -973,19 +974,64 @@ function validateCardFieldMap_(result) {
  */
 
 /**
- * Возвращает текущую таблицу.
+ * Возвращает основную таблицу: активную либо настроенную для Web App.
  */
 function getSystemSpreadsheet_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  if (ss) {
+    return ss;
+  }
+
+  const spreadsheetId = String(
+    PropertiesService.getScriptProperties().getProperty(
+      SYSTEM_SPREADSHEET_ID_PROPERTY_
+    ) || ''
+  ).trim();
+
+  if (!spreadsheetId) {
+    throw new Error(
+      'Не настроено подключение к основной Google-таблице. ' +
+      'Откройте привязанный Apps Script и один раз вручную выполните ' +
+      'функцию setupSystemSpreadsheetConnection().'
+    );
+  }
+
+  return SpreadsheetApp.openById(spreadsheetId);
+}
+
+
+/**
+ * Сохраняет ID активной таблицы для серверных вызовов опубликованного Web App.
+ * Функция запускается владельцем один раз из редактора привязанного проекта.
+ */
+function setupSystemSpreadsheetConnection() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
   if (!ss) {
     throw new Error(
       'Не удалось определить активную Google-таблицу. ' +
-      'Проект Apps Script должен быть привязан к таблице.'
+      'Откройте редактор Apps Script из основной таблицы и повторите настройку.'
     );
   }
 
-  return ss;
+  const spreadsheetId = String(ss.getId() || '').trim();
+  if (!spreadsheetId) {
+    throw new Error('Не удалось получить ID активной Google-таблицы.');
+  }
+
+  const spreadsheetName = String(ss.getName() || '');
+  PropertiesService.getScriptProperties().setProperty(
+    SYSTEM_SPREADSHEET_ID_PROPERTY_,
+    spreadsheetId
+  );
+
+  return {
+    ok: true,
+    spreadsheetId: spreadsheetId,
+    spreadsheetName: spreadsheetName,
+    message: 'Подключение к основной Google-таблице успешно сохранено.'
+  };
 }
 
 

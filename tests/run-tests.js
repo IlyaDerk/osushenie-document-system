@@ -3,7 +3,7 @@ const assert = require('assert');
 const fs = require('fs');
 const vm = require('vm');
 const cp = require('child_process');
-const files = ['SystemCore.gs', 'CreateObjectDocuments.gs', 'SyncObjectData.gs', 'ArchiveChangeHistory.gs', 'OperatorCard.gs', 'OperatorCardSave.gs', 'ObjectSheetControls.gs', 'Code.gs', 'WebAppAuth.gs', 'DocumentWebApp.gs'];
+const files = ['SystemCore.gs', 'CreateObjectDocuments.gs', 'SyncObjectData.gs', 'ArchiveChangeHistory.gs', 'OperatorCard.gs', 'OperatorCardSave.gs', 'ObjectSheetControls.gs', 'Code.gs', 'WebAppAuth.gs', 'DocumentWebAppServer.gs'];
 const source = files.map(f => fs.readFileSync(f, 'utf8')).join('\n');
 let passed = 0;
 function test(name, fn) {
@@ -1454,11 +1454,11 @@ test('127. web configuration is centralized and excludes special object', () => 
   const ctx=baseContext(); const config=vm.runInContext('SYSTEM_CONFIG',ctx); const headers=vm.runInContext('SYSTEM_HEADERS',ctx);
   assert.deepEqual([config.SHEETS.WEB_USERS.name,config.SHEETS.WEB_USERS.headerRow,config.SHEETS.WEB_USERS.dataStartRow],['Справочник Web-пользователей',4,5]);
   assert.deepEqual([headers.WEB_LOGIN,headers.WEB_PASSWORD,headers.WEB_FULL_NAME,headers.WEB_CONTACT,headers.WEB_ACCESS],['Логин','Пароль','ФИО','Контакт','Доступ']);
-  const text=fs.readFileSync('DocumentWebApp.gs','utf8'); assert.match(text,/object\.id !== SYSTEM_CONFIG\.VALUES\.ALL_OBJECTS_LABEL/);
+  const text=fs.readFileSync('DocumentWebAppServer.gs','utf8'); assert.match(text,/object\.id !== SYSTEM_CONFIG\.VALUES\.ALL_OBJECTS_LABEL/);
 });
 test('128. repeatability rules count every matching row and preserve base type ID', () => {
   const ctx=baseContext(); assert.equal(ctx.webAppValidRepeatability_('Один'),true); assert.equal(ctx.webAppValidRepeatability_('Много'),true); assert.equal(ctx.webAppValidRepeatability_(''),false);
-  const text=fs.readFileSync('DocumentWebApp.gs','utf8'); assert.match(text,/existing\.length \+ 1/); assert.match(text,/values\[H\.DOCUMENT_TYPE_ID\] = type\.id/);
+  const text=fs.readFileSync('DocumentWebAppServer.gs','utf8'); assert.match(text,/existing\.length \+ 1/); assert.match(text,/values\[H\.DOCUMENT_TYPE_ID\] = type\.id/);
   assert.doesNotMatch(text,/ACTIVE_RECORD_STATUS[\s\S]{0,200}webAppReadMatchingDocuments_/);
 });
 test('129. web document preparation fills system/object fields and leaves business fields empty', () => {
@@ -1478,12 +1478,12 @@ test('129. web document preparation fills system/object fields and leaves busine
   assert.equal(result.change.factRow,6); assert.equal(result.change.operationId,'OP-1');
 });
 test('130. create endpoint revalidates everything under the shared lock', () => {
-  const text=fs.readFileSync('DocumentWebApp.gs','utf8');
+  const text=fs.readFileSync('DocumentWebAppServer.gs','utf8');
   const start=text.indexOf('function webAppCreateDocument'); const lock=text.indexOf('withDocumentLock_',start); const object=text.indexOf('webAppFindObject_',lock); const type=text.indexOf('webAppFindDocumentType_',lock); const status=text.indexOf('webAppReadStatuses_',lock); const facts=text.indexOf('webAppReadMatchingDocuments_',lock);
   assert.ok(lock>start && object>lock && type>object && status>type && facts>status); assert.match(text,/OPERATION_STATUS_NO_CHANGES/); assert.match(text,/factWritten/);
 });
 test('131. web writes are batched and operation/change contracts are explicit', () => {
-  const text=fs.readFileSync('DocumentWebApp.gs','utf8'); assert.doesNotMatch(text,/appendRow\s*\(/); assert.match(text,/\.setValues\(\[row\]\)/);
+  const text=fs.readFileSync('DocumentWebAppServer.gs','utf8'); assert.doesNotMatch(text,/appendRow\s*\(/); assert.match(text,/\.setValues\(\[row\]\)/);
   assert.match(text,/WEB_APP_OPERATION_TYPE/); assert.match(text,/CHANGE_ACTION_CREATE/); assert.match(text,/FIELDS_CHANGED\] = operation\.changed/);
   assert.match(text,/generateOperationId_/); assert.match(text,/generateChangeId_\(operationId, 1\)/);
 });
@@ -1524,13 +1524,58 @@ test('137. document creation rechecks access inside lock and revoked access writ
   ctx.withDocumentLock_=callback=>{locked=true;return callback();};
   ctx.assertSystemSheetsStructure_=()=>{touched=true;}; ctx.getSystemSheetContext_=()=>{touched=true;};
   assert.throws(()=>ctx.webAppCreateDocument('token',{}),/Доступ.*прекращён/); assert.equal(checks,2); assert.equal(touched,false);
-  const text=fs.readFileSync('DocumentWebApp.gs','utf8'); const start=text.indexOf('function webAppCreateDocument'); const lock=text.indexOf('withDocumentLock_',start); const second=text.indexOf('webAppRequireSession_',lock); assert.ok(second>lock);
+  const text=fs.readFileSync('DocumentWebAppServer.gs','utf8'); const start=text.indexOf('function webAppCreateDocument'); const lock=text.indexOf('withDocumentLock_',start); const second=text.indexOf('webAppRequireSession_',lock); assert.ok(second>lock);
 });
 test('138. client removes revoked tokens, returns to login and never retries create', () => {
   const html=fs.readFileSync('DocumentWebApp.html','utf8'); assert.match(html,/function handleSessionError[\s\S]*sessionStorage\.removeItem\('documentWebToken'\)[\s\S]*showLogin/);
   assert.match(html,/Доступ к приложению прекращён/); assert.match(html,/Сессия недействительна/);
   const createHandler=html.slice(html.indexOf("el('documentForm').addEventListener"),html.indexOf("el('logout').addEventListener"));
   assert.equal((createHandler.match(/webAppCreateDocument/g)||[]).length,1); assert.doesNotMatch(createHandler,/setTimeout|retry|повтор/i);
+});
+test('139. system spreadsheet prefers the active spreadsheet', () => {
+  const active={name:'active'}; let propertiesRead=0,opened=0;
+  const ctx=baseContext({
+    SpreadsheetApp:{getActiveSpreadsheet:()=>active,openById(){opened++;}},
+    scriptProperties:{getProperty(){propertiesRead++;return 'saved-id';},setProperty(){},deleteProperty(){}}
+  });
+  assert.equal(ctx.getSystemSpreadsheet_(),active); assert.equal(propertiesRead,0); assert.equal(opened,0);
+});
+test('140. system spreadsheet opens saved ID when active spreadsheet is unavailable', () => {
+  const opened={name:'opened'}; let requested='';
+  const ctx=baseContext({
+    SpreadsheetApp:{getActiveSpreadsheet:()=>null,openById(id){requested=id;return opened;}},
+    scriptProperties:{getProperty(key){assert.equal(key,'SYSTEM_SPREADSHEET_ID');return ' sheet-id ';},setProperty(){},deleteProperty(){}}
+  });
+  assert.equal(ctx.getSystemSpreadsheet_(),opened); assert.equal(requested,'sheet-id');
+});
+test('141. missing spreadsheet connection reports the setup instruction', () => {
+  const ctx=baseContext({
+    SpreadsheetApp:{getActiveSpreadsheet:()=>null,openById(){throw new Error('must not open');}},
+    scriptProperties:{getProperty(){return '';},setProperty(){},deleteProperty(){}}
+  });
+  assert.throws(()=>ctx.getSystemSpreadsheet_(),/setupSystemSpreadsheetConnection\(\)/);
+});
+test('142. spreadsheet setup saves active ID and returns confirmation', () => {
+  let savedKey='',savedValue=''; const active={getId:()=> 'main-sheet-id',getName:()=> 'Осушение'};
+  const ctx=baseContext({
+    SpreadsheetApp:{getActiveSpreadsheet:()=>active},
+    scriptProperties:{getProperty(){return null;},setProperty(key,value){savedKey=key;savedValue=value;},deleteProperty(){}}
+  });
+  const result=ctx.setupSystemSpreadsheetConnection(); assert.equal(savedKey,'SYSTEM_SPREADSHEET_ID'); assert.equal(savedValue,'main-sheet-id');
+  assert.equal(result.ok,true); assert.equal(result.spreadsheetId,'main-sheet-id'); assert.equal(result.spreadsheetName,'Осушение'); assert.match(result.message,/успешно/);
+});
+test('143. spreadsheet setup rejects missing active spreadsheet without writes', () => {
+  let writes=0; const ctx=baseContext({
+    SpreadsheetApp:{getActiveSpreadsheet:()=>null},
+    scriptProperties:{getProperty(){return null;},setProperty(){writes++;},deleteProperty(){}}
+  });
+  assert.throws(()=>ctx.setupSystemSpreadsheetConnection(),/активную Google-таблицу/); assert.equal(writes,0);
+});
+test('144. renamed server loads and doGet still opens DocumentWebApp HTML', () => {
+  assert.ok(files.includes('DocumentWebAppServer.gs')); assert.ok(!files.includes('DocumentWebApp.gs'));
+  let requested=''; const output={setTitle(){return this;},addMetaTag(){return this;}};
+  const ctx=baseContext({HtmlService:{createHtmlOutputFromFile(name){requested=name;return output;}}});
+  assert.equal(ctx.doGet(),output); assert.equal(requested,'DocumentWebApp');
 });
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);
