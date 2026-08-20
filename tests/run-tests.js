@@ -343,7 +343,7 @@ function creationPrepareFixture(count) {
       workEndPlan: new Date('2026-08-31T00:00:00Z'), workEndFact: i === 0 ? new Date('2026-08-20T00:00:00Z') : '',
       responsibleForeman: 'Иванов', responsibleForemanId: 'ST-1'
     },
-    rule: { id: 'DT-1', name: 'Акт' }
+    rule: { id: 'DT-1', name: 'Акт', repeatability: 'Много' }
   }));
   return ctx.prepareDocumentRows_(missing, { documentIds: {} }, context, 4, new Date('2026-08-04T10:00:00Z'), 'tester@example.com', 'OP-20260804-0001');
 }
@@ -1761,6 +1761,31 @@ test('157. migration partially skips problems and returns the exact report contr
   assert.equal(report.problems.length,4); assert.ok(report.problems.every(problem=>Number.isInteger(problem.sheetRow)&&problem.reason));
   const numberWrite=writes.find(write=>write.column===documentHeaders.indexOf('Номер документа')+1);
   assert.equal(numberWrite.values[0][0],'Дополнительное соглашение №3');
+});
+
+test('158. mass creation applies One blank and Many max-plus-one numbering', () => {
+  const ctx=baseContext(); ctx.getSystemSpreadsheet_=()=>({getSpreadsheetTimeZone:()=> 'UTC'});
+  const headers=Array.from(vm.runInContext('SYSTEM_CONFIG.SHEETS.DOCUMENTS.requiredHeaders',ctx));
+  const context={headers,headerMap:Object.fromEntries(headers.map((header,index)=>[header,index+1]))};
+  const object={id:'OBJ',name:'Объект',contractNumber:'DOG',objectStatus:'Действующий',workStartDate:new Date(),workEndPlan:new Date(),workEndFact:'',responsibleForeman:'Иванов',responsibleForemanId:'ST-1'};
+  const facts={documentIds:{},documentNumbersByKey:{
+    'OBJ\u0000MANY':[
+      {documentType:'Акт',documentNumber:2},
+      {documentType:'Акт',documentNumber:'Акт №4'},
+      {documentType:'Акт №3',documentNumber:''}
+    ]
+  }};
+  ctx.generateChangeId_=(id,index)=>'CHG-'+index;
+  const prepared=ctx.prepareDocumentRows_([
+    {object,rule:{id:'ONE',name:'Договор',repeatability:'Один'}},
+    {object,rule:{id:'MANY',name:'Акт',repeatability:'Много'}}
+  ],facts,context,4,new Date(),'actor','OP-1');
+  const numberIndex=headers.indexOf('Номер документа');
+  const typeIndex=headers.indexOf('Тип документа');
+  assert.equal(prepared.documentRows[0][numberIndex],'');
+  assert.equal(prepared.documentRows[1][numberIndex],5);
+  assert.equal(prepared.documentRows[0][typeIndex],'Договор');
+  assert.equal(prepared.documentRows[1][typeIndex],'Акт');
 });
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);

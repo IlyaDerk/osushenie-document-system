@@ -34,15 +34,15 @@ function webAppGetExistingDocuments(sessionToken, objectId, documentTypeId) {
   const object = webAppFindObject_(objectId);
   const type = webAppFindDocumentType_(documentTypeId);
   const existing = webAppReadMatchingDocuments_(object.id, type.id, type.name);
-  const blocked = type.repeatability === 'Один' && existing.length > 0;
-  const nextNumber = type.repeatability === 'Много'
+  const blocked = type.repeatability === SYSTEM_CONFIG.VALUES.DOCUMENT_REPEATABILITY_ONE && existing.length > 0;
+  const nextNumber = type.repeatability === SYSTEM_CONFIG.VALUES.DOCUMENT_REPEATABILITY_MANY
     ? webAppNextDocumentNumber_(existing, type.name) : '';
   return {
     objectName: object.name,
     documentType: { id: type.id, name: type.name, repeatability: type.repeatability },
     documents: existing,
     allowed: !blocked,
-    nextDocumentName: type.repeatability === 'Много'
+    nextDocumentName: type.repeatability === SYSTEM_CONFIG.VALUES.DOCUMENT_REPEATABILITY_MANY
       ? webAppDisplayDocumentName_(type.name, nextNumber) : '',
     warning: blocked
       ? 'Документ этого типа уже существует.\n' +
@@ -74,7 +74,7 @@ function webAppCreateDocument(sessionToken, payload) {
       // Окончательный номер всегда рассчитывается после повторного
       // чтения фактов внутри общей блокировки.
       const existing = webAppReadMatchingDocuments_(object.id, type.id, type.name);
-      if (type.repeatability === 'Один' && existing.length > 0) {
+      if (type.repeatability === SYSTEM_CONFIG.VALUES.DOCUMENT_REPEATABILITY_ONE && existing.length > 0) {
         webAppWriteOperation_({
           operationId: operationId, startedAt: startedAt, finishedAt: new Date(),
           actor: user.actor, status: SYSTEM_CONFIG.VALUES.OPERATION_STATUS_NO_CHANGES,
@@ -94,7 +94,7 @@ function webAppCreateDocument(sessionToken, payload) {
         documentsContext.config.dataStartRow
       );
       const now = new Date();
-      const documentNumber = type.repeatability === 'Много'
+      const documentNumber = type.repeatability === SYSTEM_CONFIG.VALUES.DOCUMENT_REPEATABILITY_MANY
         ? webAppNextDocumentNumber_(existing, type.name) : '';
       if (documentNumber !== '' && webAppDocumentNumberOccupied_(
         existing, type.name, documentNumber
@@ -190,7 +190,10 @@ function webAppFindDocumentType_(id) {
   return matches[0];
 }
 
-function webAppValidRepeatability_(value) { return value === 'Один' || value === 'Много'; }
+function webAppValidRepeatability_(value) {
+  return value === SYSTEM_CONFIG.VALUES.DOCUMENT_REPEATABILITY_ONE ||
+    value === SYSTEM_CONFIG.VALUES.DOCUMENT_REPEATABILITY_MANY;
+}
 
 function webAppFindObject_(id) {
   const cleanId = String(id == null ? '' : id).trim();

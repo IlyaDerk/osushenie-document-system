@@ -222,6 +222,7 @@ function readAutomaticDocumentRules_() {
     context,
     H.CREATE_ON_OBJECT_CREATION
   );
+  const repeatabilityIndex = creationColumnIndex_(context, H.REPEATABILITY);
   const rules = [];
   const ids = {};
   const names = {};
@@ -238,6 +239,8 @@ function readAutomaticDocumentRules_() {
     const sheetRow = context.config.dataStartRow + offset;
     const id = String(row[idIndex] == null ? '' : row[idIndex]).trim();
     const name = String(row[nameIndex] == null ? '' : row[nameIndex]).trim();
+    const repeatability = String(row[repeatabilityIndex] == null
+      ? '' : row[repeatabilityIndex]).trim();
     const normalizedName = creationNormalizedValue_(name);
 
     if (!id) {
@@ -252,7 +255,22 @@ function readAutomaticDocumentRules_() {
         ': не заполнено поле «' + H.DOCUMENT_TYPE + '»'
       );
     }
-    if (!id || !name) {
+    const validRepeatability = [
+      SYSTEM_CONFIG.VALUES.DOCUMENT_REPEATABILITY_ONE,
+      SYSTEM_CONFIG.VALUES.DOCUMENT_REPEATABILITY_MANY
+    ].some(function (value) {
+      return creationNormalizedValue_(value) ===
+        creationNormalizedValue_(repeatability);
+    });
+    if (!validRepeatability) {
+      errors.push(
+        'лист «' + context.config.name + '», строка ' + sheetRow +
+        ': поле «' + H.REPEATABILITY + '» должно иметь значение «' +
+        SYSTEM_CONFIG.VALUES.DOCUMENT_REPEATABILITY_ONE + '» или «' +
+        SYSTEM_CONFIG.VALUES.DOCUMENT_REPEATABILITY_MANY + '»'
+      );
+    }
+    if (!id || !name || !validRepeatability) {
       return;
     }
     if (ids[id]) {
@@ -271,7 +289,12 @@ function readAutomaticDocumentRules_() {
     } else if (!names[normalizedName]) {
       names[normalizedName] = { id: id, row: sheetRow };
     }
-    rules.push({ id: id, name: name, sheetRow: sheetRow });
+    rules.push({
+      id: id,
+      name: name,
+      repeatability: repeatability,
+      sheetRow: sheetRow
+    });
   });
 
   if (rules.length === 0 && errors.length === 0) {
@@ -546,10 +569,12 @@ function prepareDocumentRows_(
 
     const values = {};
     const typeKey = creationCompositeKey_(item.object.id, item.rule.id);
-    const documentNumber = findNextCreationTypeDocumentNumber_(
-      facts.documentNumbersByKey && facts.documentNumbersByKey[typeKey],
-      item.rule.name
-    );
+    const documentNumber = creationNormalizedValue_(item.rule.repeatability) ===
+      creationNormalizedValue_(SYSTEM_CONFIG.VALUES.DOCUMENT_REPEATABILITY_MANY)
+      ? findNextCreationTypeDocumentNumber_(
+        facts.documentNumbersByKey && facts.documentNumbersByKey[typeKey],
+        item.rule.name
+      ) : '';
     values[H.DOCUMENT_ID] = documentId;
     values[H.OBJECT_ID] = item.object.id;
     values[H.OBJECT_NAME] = item.object.name;
