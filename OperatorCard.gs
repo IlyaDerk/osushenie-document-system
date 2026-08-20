@@ -241,7 +241,7 @@ function operatorCardValidateHeaders_(documentsHeaders, cardHeaders, documentsNa
   for (let index = 0; index < expectedCount; index++) {
     const configured = SYSTEM_CONFIG.SHEETS.OPERATOR_CARD.requiredHeaders[index];
     const actual = operatorCardNormalizeText_(cardHeaders[cardStartIndex + index]);
-    if (index < 25) {
+    if (index < expectedCount - 2) {
       const expected = operatorCardNormalizeText_(documentsHeaders[documentsStartIndex + index]);
       if (expected !== configured) throw new Error('Лист «' + documentsName + '», позиция ' + (index + 1) + ' рабочего блока: ожидается заголовок «' + configured + '», фактически «' + expected + '».');
     }
@@ -249,7 +249,7 @@ function operatorCardValidateHeaders_(documentsHeaders, cardHeaders, documentsNa
   }
   for (let index = cardStartIndex + expectedCount; index < cardHeaders.length; index++) {
     const actual = operatorCardNormalizeText_(cardHeaders[index]);
-    if (actual) throw new Error('Лист «' + cardName + '», физическая колонка ' + (index + 1) + ': ожидается пустой заголовок после утверждённых 27 полей, фактически «' + actual + '».');
+    if (actual) throw new Error('Лист «' + cardName + '», физическая колонка ' + (index + 1) + ': ожидается пустой заголовок после утверждённых ' + expectedCount + ' полей, фактически «' + actual + '».');
   }
   return true;
 }
@@ -302,7 +302,8 @@ function operatorCardPrepareRows_(rows, indexes, filters, dateRange, dataStartRo
   });
   if (invalidDates) warnings.push('Строк с некорректной датой создания пропущено: ' + invalidDates + '.');
   return { activeCount: active.length, rows: selected, cardRows: selected.map(function (item) {
-    const cardRow = item.row.slice(sourceStartIndex, sourceStartIndex + 25);
+    const sharedFieldCount = SYSTEM_CONFIG.SHEETS.OPERATOR_CARD.requiredHeaders.length - 2;
+    const cardRow = item.row.slice(sourceStartIndex, sourceStartIndex + sharedFieldCount);
     cardRow[indexes.documentHolder - sourceStartIndex] = operatorCardDisplayLabel_(item.row[indexes.documentHolder], item.row[indexes.holderId]);
     cardRow[indexes.transferredBy - sourceStartIndex] = operatorCardDisplayLabel_(item.row[indexes.transferredBy], item.row[indexes.transferredById]);
     return cardRow.concat([item.row[indexes.recordStatus], item.sheetRow]);
@@ -322,12 +323,14 @@ function operatorCardReplace_(cardContext, newRows) {
   const writeCount = Math.max(oldCount, newRows.length);
   if (!writeCount) return;
   const output = Array.from({ length: writeCount }, function (_, index) {
-    return index < newRows.length ? newRows[index].slice() : Array(27).fill('');
+    return index < newRows.length ? newRows[index].slice() :
+      Array(cardContext.config.requiredHeaders.length).fill('');
   });
-  sheet.getRange(start, cardStartColumn, writeCount, 27).setValues(output);
+  const cardWidth = cardContext.config.requiredHeaders.length;
+  sheet.getRange(start, cardStartColumn, writeCount, cardWidth).setValues(output);
   if (sheet.hideColumns) {
     sheet.hideColumns(cardStartColumn, 2);
-    sheet.hideColumns(cardStartColumn + 26);
+    sheet.hideColumns(cardStartColumn + cardWidth - 1);
   }
 }
 
