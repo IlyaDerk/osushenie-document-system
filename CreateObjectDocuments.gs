@@ -222,6 +222,7 @@ function readAutomaticDocumentRules_() {
     context,
     H.CREATE_ON_OBJECT_CREATION
   );
+  const repeatabilityIndex = creationColumnIndex_(context, H.REPEATABILITY);
   const rules = [];
   const ids = {};
   const names = {};
@@ -238,6 +239,8 @@ function readAutomaticDocumentRules_() {
     const sheetRow = context.config.dataStartRow + offset;
     const id = String(row[idIndex] == null ? '' : row[idIndex]).trim();
     const name = String(row[nameIndex] == null ? '' : row[nameIndex]).trim();
+    const repeatability = String(row[repeatabilityIndex] == null
+      ? '' : row[repeatabilityIndex]).trim();
     const normalizedName = creationNormalizedValue_(name);
 
     if (!id) {
@@ -252,7 +255,22 @@ function readAutomaticDocumentRules_() {
         ': не заполнено поле «' + H.DOCUMENT_TYPE + '»'
       );
     }
-    if (!id || !name) {
+    const validRepeatability = [
+      SYSTEM_CONFIG.VALUES.DOCUMENT_REPEATABILITY_ONE,
+      SYSTEM_CONFIG.VALUES.DOCUMENT_REPEATABILITY_MANY
+    ].some(function (value) {
+      return creationNormalizedValue_(value) ===
+        creationNormalizedValue_(repeatability);
+    });
+    if (!validRepeatability) {
+      errors.push(
+        'лист «' + context.config.name + '», строка ' + sheetRow +
+        ': поле «' + H.REPEATABILITY + '» должно иметь значение «' +
+        SYSTEM_CONFIG.VALUES.DOCUMENT_REPEATABILITY_ONE + '» или «' +
+        SYSTEM_CONFIG.VALUES.DOCUMENT_REPEATABILITY_MANY + '»'
+      );
+    }
+    if (!id || !name || !validRepeatability) {
       return;
     }
     if (ids[id]) {
@@ -271,7 +289,12 @@ function readAutomaticDocumentRules_() {
     } else if (!names[normalizedName]) {
       names[normalizedName] = { id: id, row: sheetRow };
     }
-    rules.push({ id: id, name: name, sheetRow: sheetRow });
+    rules.push({
+      id: id,
+      name: name,
+      repeatability: repeatability,
+      sheetRow: sheetRow
+    });
   });
 
   if (rules.length === 0 && errors.length === 0) {
@@ -415,7 +438,10 @@ function readExistingCreationFacts_() {
   const objectIndex = creationColumnIndex_(context, H.OBJECT_ID);
   const typeIndex = creationColumnIndex_(context, H.DOCUMENT_TYPE_ID);
   const documentIndex = creationColumnIndex_(context, H.DOCUMENT_ID);
+  const documentTypeNameIndex = creationColumnIndex_(context, H.DOCUMENT_TYPE);
+  const documentNumberIndex = creationColumnIndex_(context, H.DOCUMENT_NUMBER);
   const keys = {};
+  const documentNumbersByKey = {};
   const documentIds = {};
   const incompleteFactRows = [];
 
@@ -437,6 +463,12 @@ function readExistingCreationFacts_() {
         keys[key] = [];
       }
       keys[key].push(sheetRow);
+      if (!documentNumbersByKey[key]) documentNumbersByKey[key] = [];
+      documentNumbersByKey[key].push({
+        documentType: row[documentTypeNameIndex],
+        documentNumber: row[documentNumberIndex],
+        sheetRow: sheetRow
+      });
     }
     if (documentId) {
       if (!documentIds[documentId]) {
@@ -470,6 +502,7 @@ function readExistingCreationFacts_() {
   return {
     rows: rows,
     keys: keys,
+    documentNumbersByKey: documentNumbersByKey,
     documentIds: documentIds,
     duplicateObjectTypeKeys: duplicateObjectTypeKeys,
     duplicateDocumentIds: duplicateDocumentIds,
@@ -535,11 +568,19 @@ function prepareDocumentRows_(
     usedIds[documentId] = true;
 
     const values = {};
+    const typeKey = creationCompositeKey_(item.object.id, item.rule.id);
+    const documentNumber = creationNormalizedValue_(item.rule.repeatability) ===
+      creationNormalizedValue_(SYSTEM_CONFIG.VALUES.DOCUMENT_REPEATABILITY_MANY)
+      ? findNextCreationTypeDocumentNumber_(
+        facts.documentNumbersByKey && facts.documentNumbersByKey[typeKey],
+        item.rule.name
+      ) : '';
     values[H.DOCUMENT_ID] = documentId;
     values[H.OBJECT_ID] = item.object.id;
     values[H.OBJECT_NAME] = item.object.name;
     values[H.DOCUMENT_TYPE] = item.rule.name;
     values[H.CONTRACT_NUMBER] = item.object.contractNumber;
+    values[H.DOCUMENT_NUMBER] = documentNumber;
     values[H.DOCUMENT_STATUS] =
       SYSTEM_CONFIG.VALUES.INITIAL_DOCUMENT_STATUS;
     values[H.OBJECT_STATUS] = item.object.objectStatus;
@@ -552,6 +593,7 @@ function prepareDocumentRows_(
     values[H.UPDATED_BY_EMAIL] = userEmail;
     values[H.RESPONSIBLE_FOREMAN] = item.object.responsibleForeman;
     values[H.RESPONSIBLE_FOREMAN_ID] = item.object.responsibleForemanId;
+    values[H.CUSTOMER_SIGNING_RESPONSIBLE] = '';
     values[H.DOCUMENT_STATUS_CHANGED_AT] = now;
     values[H.CREATION_SOURCE] =
       SYSTEM_CONFIG.VALUES.OBJECT_CREATION_SOURCE;
@@ -575,6 +617,33 @@ function prepareDocumentRows_(
     );
   });
   return { documentRows: documentRows, changeRows: changeRows };
+}
+
+/** Next positive instance number inside one object/type key. */
+function findNextCreationTypeDocumentNumber_(existing, canonicalType) {
+  const maximum = (existing || []).reduce(function (current, item) {
+    const explicit = String(item.documentNumber == null
+      ? '' : item.documentNumber).trim();
+    let number = /^\d+$/.test(explicit) ? Number(explicit) : null;
+    if (!(Number.isSafeInteger(number) && number > 0) && explicit) {
+      const migrated = documentArchitectureExtractLegacyNumber_(
+        explicit, canonicalType, ''
+      );
+      number = migrated ? Number(migrated) : null;
+    }
+    if (!(Number.isSafeInteger(number) && number > 0) && !explicit) {
+      const legacy = documentArchitectureExtractLegacyNumber_(
+        item.documentType, canonicalType, ''
+      );
+      number = legacy ? Number(legacy) : null;
+    }
+    return Number.isSafeInteger(number) && number > 0
+      ? Math.max(current, number) : current;
+  }, 0);
+  if (maximum >= Number.MAX_SAFE_INTEGER) {
+    throw new Error('Исчерпан диапазон номеров документа.');
+  }
+  return maximum + 1;
 }
 
 
@@ -616,6 +685,7 @@ function buildCreationInitialSnapshot_(values) {
     H.DOCUMENT_TYPE,
     H.DOCUMENT_TYPE_ID,
     H.CONTRACT_NUMBER,
+    H.DOCUMENT_NUMBER,
     H.DOCUMENT_STATUS,
     H.OBJECT_STATUS,
     H.WORK_START_DATE,

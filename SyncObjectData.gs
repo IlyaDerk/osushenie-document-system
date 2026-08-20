@@ -10,6 +10,27 @@ const OBJECT_SYNC_FIELDS_ = Object.freeze([
   H.RESPONSIBLE_FOREMAN_ID
 ]);
 
+/** Guards v2 document-owned fields from accidental object synchronization. */
+function assertObjectSyncFieldContract_() {
+  const documentOwned = [
+    H.DOCUMENT_TYPE,
+    H.DOCUMENT_TYPE_ID,
+    H.DOCUMENT_NUMBER,
+    H.DOCUMENT_DATE,
+    H.CUSTOMER_SIGNING_RESPONSIBLE
+  ];
+  const conflicts = OBJECT_SYNC_FIELDS_.filter(function (header) {
+    return documentOwned.indexOf(header) !== -1;
+  });
+  if (conflicts.length > 0) {
+    throw new Error(
+      'Ошибка контракта синхронизации: документные поля не могут ' +
+      'копироваться из листа «' + SYSTEM_CONFIG.SHEETS.OBJECTS.name + '»: ' +
+      conflicts.join(', ')
+    );
+  }
+}
+
 /** Ручной запуск кнопки «Синхронизировать данные объектов». */
 function syncObjectDataToDocuments() {
   const startedAt = new Date();
@@ -61,6 +82,7 @@ function syncObjectDataToDocuments() {
 
 /** Вся проверка, повторное чтение и запись выполняются под общей блокировкой. */
 function syncObjectDataUnderLock_(operationId, startedAt, userEmail) {
+  assertObjectSyncFieldContract_();
   assertSystemSheetsStructure_([
     'OBJECTS',
     'DOCUMENTS',
