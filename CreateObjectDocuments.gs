@@ -616,6 +616,7 @@ function buildCreationInitialSnapshot_(values) {
     H.DOCUMENT_TYPE,
     H.DOCUMENT_TYPE_ID,
     H.CONTRACT_NUMBER,
+    H.DOCUMENT_NUMBER,
     H.DOCUMENT_STATUS,
     H.OBJECT_STATUS,
     H.WORK_START_DATE,

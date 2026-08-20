@@ -51,7 +51,9 @@ function migrateDocumentsToArchitectureV2() {
       }
       const oldType = migrationText_(row[indexes[H.DOCUMENT_TYPE]]);
       const oldNumber = row[indexes[H.DOCUMENT_NUMBER]];
-      const number = migrationExtractNumber_(oldType, canonical.name, oldNumber);
+      const number = documentArchitectureExtractLegacyNumber_(
+        oldType, canonical.name, oldNumber
+      );
       const rowChanges = [];
       if (oldType !== canonical.name) {
         rowChanges.push({ header: H.DOCUMENT_TYPE, oldValue: oldType, newValue: canonical.name });
@@ -88,7 +90,8 @@ function migrateDocumentsToArchitectureV2() {
   });
 }
 
-function migrationExtractNumber_(currentType, canonicalType, existingNumber) {
+function documentArchitectureExtractLegacyNumber_(currentType, canonicalType,
+  existingNumber) {
   if (!migrationEmpty_(existingNumber) || !currentType || currentType === canonicalType) return '';
   const escaped = canonicalType.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const match = currentType.match(new RegExp('^' + escaped + '\\s*(?:[\u2014\u2013-]\s*)?№\\s*(.+)$', 'i'));

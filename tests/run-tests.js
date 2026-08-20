@@ -1458,9 +1458,10 @@ test('127. web configuration is centralized and excludes special object', () => 
   assert.deepEqual([headers.WEB_LOGIN,headers.WEB_PASSWORD,headers.WEB_FULL_NAME,headers.WEB_CONTACT,headers.WEB_ACCESS],['Логин','Пароль','ФИО','Контакт','Доступ']);
   const text=fs.readFileSync('DocumentWebAppServer.gs','utf8'); assert.match(text,/object\.id !== SYSTEM_CONFIG\.VALUES\.ALL_OBJECTS_LABEL/);
 });
-test('128. repeatability rules count every matching row and preserve base type ID', () => {
+test('128. repeatability rules preserve base type ID and use max numbering', () => {
   const ctx=baseContext(); assert.equal(ctx.webAppValidRepeatability_('Один'),true); assert.equal(ctx.webAppValidRepeatability_('Много'),true); assert.equal(ctx.webAppValidRepeatability_(''),false);
-  const text=fs.readFileSync('DocumentWebAppServer.gs','utf8'); assert.match(text,/existing\.length \+ 1/); assert.match(text,/values\[H\.DOCUMENT_TYPE_ID\] = type\.id/);
+  const text=fs.readFileSync('DocumentWebAppServer.gs','utf8'); assert.doesNotMatch(text,/existing\.length \+ 1/); assert.match(text,/values\[H\.DOCUMENT_TYPE_ID\] = type\.id/);
+  assert.match(text,/webAppNextDocumentNumber_/);
   assert.doesNotMatch(text,/ACTIVE_RECORD_STATUS[\s\S]{0,200}webAppReadMatchingDocuments_/);
 });
 test('129. web document preparation fills system/object fields and leaves business fields empty', () => {
@@ -1471,9 +1472,10 @@ test('129. web document preparation fills system/object fields and leaves busine
   const now=vm.runInContext("new Date('2026-08-17T10:00:00Z')",ctx);
   const facts={documentIds:{'DOC-15-0001':[4],'DOC-15-0003':[5]}};
   ctx.generateChangeId_=()=> 'CHG-1';
-  const result=ctx.webAppPrepareDocument_({id:'15',name:'Объект',contractNumber:'D-1',objectStatus:'Действующий',workStartDate:now,workEndPlan:now,workEndFact:'',responsibleForeman:'Иванов',responsibleForemanId:'ST-1'},{id:'TYPE-1'},'Акт №3','Подписан',facts,context,6,now,'actor','OP-1');
+  const result=ctx.webAppPrepareDocument_({id:'15',name:'Объект',contractNumber:'D-1',objectStatus:'Действующий',workStartDate:now,workEndPlan:now,workEndFact:'',responsibleForeman:'Иванов',responsibleForemanId:'ST-1'},{id:'TYPE-1'},'Акт',3,'Подписан',facts,context,6,now,'actor','OP-1');
   const value=h=>result.row[headers.indexOf(h)];
-  assert.equal(result.documentId,'DOC-15-0004'); assert.equal(value('ID типа документа'),'TYPE-1'); assert.equal(value('Тип документа'),'Акт №3');
+  assert.equal(result.documentId,'DOC-15-0004'); assert.equal(value('ID типа документа'),'TYPE-1'); assert.equal(value('Тип документа'),'Акт');
+  assert.equal(value('Номер документа'),3); assert.equal(result.row.length,34);
   assert.equal(value('Статус записи'),'Активная'); assert.equal(value('Источник создания'),'Web-приложение'); assert.equal(value('Кто обновил (email)'),'actor');
   for(const h of ['Дата создания','Дата обновления','Дата изменения статуса документа']) assert.equal(Object.prototype.toString.call(value(h)),'[object Date]',h);
   for(const h of ['Дата документа','Оригинал / ЭДО','Комментарий','У кого документ','Где документ','Кто передал','Оплачен','Сумма документа','ГУ (Да/Нет)','Условия ГУ','ID сотрудника — у кого документ','ID сотрудника — кто передал','Отчётный период']) assert.equal(value(h),'',h);
@@ -1595,10 +1597,10 @@ test('145. v2 contracts separate canonical document type from document number', 
 });
 test('146. v2 migration extracts only a suffix number and preserves an existing number', () => {
   const ctx=baseContext();
-  assert.equal(ctx.migrationExtractNumber_('Дополнительное соглашение №3','Дополнительное соглашение',''),'3');
-  assert.equal(ctx.migrationExtractNumber_('КС-2 — акт о приёмке выполненных работ №2','КС-2 — акт о приёмке выполненных работ',''),'2');
-  assert.equal(ctx.migrationExtractNumber_('Чужой тип №7','Дополнительное соглашение',''),'');
-  assert.equal(ctx.migrationExtractNumber_('Дополнительное соглашение №3','Дополнительное соглашение','ручной-5'),'');
+  assert.equal(ctx.documentArchitectureExtractLegacyNumber_('Дополнительное соглашение №3','Дополнительное соглашение',''),'3');
+  assert.equal(ctx.documentArchitectureExtractLegacyNumber_('КС-2 — акт о приёмке выполненных работ №2','КС-2 — акт о приёмке выполненных работ',''),'2');
+  assert.equal(ctx.documentArchitectureExtractLegacyNumber_('Чужой тип №7','Дополнительное соглашение',''),'');
+  assert.equal(ctx.documentArchitectureExtractLegacyNumber_('Дополнительное соглашение №3','Дополнительное соглашение','ручной-5'),'');
 });
 test('147. v2 migration is data-only and uses centralized contracts', () => {
   const text=fs.readFileSync('DocumentArchitectureMigration.gs','utf8');
@@ -1606,6 +1608,78 @@ test('147. v2 migration is data-only and uses centralized contracts', () => {
   assert.match(text,/assertSystemSheetsStructure_/);
   assert.match(text,/H\.DOCUMENT_NUMBER/);
   assert.match(text,/DOCUMENT_V2_MIGRATION_SOURCE/);
+});
+
+test('148. Web App numbering uses max plus one and never fills gaps', () => {
+  const ctx=baseContext();
+  const documents=[1,2,4].map(number=>({documentType:'КС-2',storedDocumentType:'КС-2',documentNumber:number}));
+  assert.equal(ctx.webAppNextDocumentNumber_(documents,'КС-2'),5);
+  assert.equal(ctx.webAppNextDocumentNumber_([],'КС-2'),1);
+  assert.equal(ctx.webAppDocumentNumberOccupied_(documents,'КС-2',4),true);
+  assert.equal(ctx.webAppDocumentNumberOccupied_(documents,'КС-2',5),false);
+});
+
+test('149. Web App numbering supports legacy suffix with explicit-number priority', () => {
+  const ctx=baseContext();
+  assert.equal(ctx.webAppNextDocumentNumber_([
+    {documentType:'КС-2',storedDocumentType:'КС-2 №3',documentNumber:''}
+  ],'КС-2'),4);
+  assert.equal(ctx.webAppNextDocumentNumber_([
+    {documentType:'КС-2',storedDocumentType:'КС-2 №99',documentNumber:'4'}
+  ],'КС-2'),5);
+  assert.equal(ctx.webAppNextDocumentNumber_([
+    {documentType:'КС-2',storedDocumentType:'КС-2 2026 акт',documentNumber:''},
+    {documentType:'КС-2',storedDocumentType:'КС-2',documentNumber:'0'},
+    {documentType:'КС-2',storedDocumentType:'КС-2',documentNumber:'2.5'}
+  ],'КС-2'),1);
+});
+
+test('150. repeatability One stores an empty number and Many stores it separately', () => {
+  const ctx=baseContext();
+  const headers=Array.from(vm.runInContext('SYSTEM_CONFIG.SHEETS.DOCUMENTS.requiredHeaders',ctx));
+  const context={headers,headerMap:Object.fromEntries(headers.map((header,index)=>[header,index+1]))};
+  const object={id:'7',name:'Объект',contractNumber:'',objectStatus:'Действующий',workStartDate:'',workEndPlan:'',workEndFact:'',responsibleForeman:'',responsibleForemanId:''};
+  const facts={documentIds:{}}; const now=new Date(); ctx.generateChangeId_=()=> 'CHG-1';
+  const one=ctx.webAppPrepareDocument_(object,{id:'ONE'},'Договор','', 'Новый',facts,context,4,now,'actor','OP-1');
+  const many=ctx.webAppPrepareDocument_(object,{id:'MANY'},'КС-2',3, 'Новый',facts,context,5,now,'actor','OP-2');
+  const at=(row,header)=>row[headers.indexOf(header)];
+  assert.equal(at(one.row,'Номер документа'),'');
+  assert.equal(at(many.row,'Тип документа'),'КС-2');
+  assert.equal(at(many.row,'Номер документа'),3);
+  assert.doesNotMatch(at(many.row,'Тип документа'),/№/);
+});
+
+test('151. existing Web App documents expose number and display name separately', () => {
+  const ctx=baseContext();
+  const headers=Array.from(vm.runInContext('SYSTEM_CONFIG.SHEETS.DOCUMENTS.requiredHeaders',ctx));
+  const makeRow=values=>headers.map(header=>Object.prototype.hasOwnProperty.call(values,header)?values[header]:'');
+  const rows=[
+    makeRow({'ID объекта':'OBJ','ID типа документа':'TYPE','Тип документа':'КС-2','Номер документа':4,'ID документа':'D1'}),
+    makeRow({'ID объекта':'OBJ','ID типа документа':'TYPE','Тип документа':'КС-2 №5','Номер документа':'','ID документа':'D2'})
+  ];
+  ctx.getSystemSheetContext_=()=>({headers,headerMap:Object.fromEntries(headers.map((header,index)=>[header,index+1])),config:{dataStartRow:4},sheet:{getLastRow:()=>5,getRange:()=>({getValues:()=>rows})}});
+  const result=ctx.webAppReadMatchingDocuments_('OBJ','TYPE','КС-2');
+  assert.equal(result[0].documentNumber,'4'); assert.equal(result[0].displayName,'КС-2 №4');
+  assert.equal(result[1].documentNumber,''); assert.equal(result[1].displayName,'КС-2 №5');
+});
+
+test('152. preview and locked creation share the numbering algorithm', () => {
+  const text=fs.readFileSync('DocumentWebAppServer.gs','utf8');
+  const preview=text.slice(text.indexOf('function webAppGetExistingDocuments'),text.indexOf('function webAppCreateDocument'));
+  const create=text.slice(text.indexOf('function webAppCreateDocument'),text.indexOf('function webAppReadDocumentTypes_'));
+  assert.match(preview,/webAppNextDocumentNumber_/);
+  assert.match(create,/withDocumentLock_[\s\S]*webAppReadMatchingDocuments_[\s\S]*webAppNextDocumentNumber_[\s\S]*webAppDocumentNumberOccupied_/);
+  assert.doesNotMatch(text,/values\[H\.DOCUMENT_TYPE\]\s*=\s*[^;]*\+[^;]*№/);
+});
+
+test('153. creation snapshot keeps canonical type and separate document number', () => {
+  const ctx=baseContext();
+  const snapshot=ctx.buildCreationInitialSnapshot_({
+    'Тип документа':'КС-2','Номер документа':6,'ID типа документа':'TYPE'
+  });
+  assert.match(snapshot,/Тип документа: КС-2/);
+  assert.match(snapshot,/Номер документа: 6/);
+  assert.doesNotMatch(snapshot,/КС-2 №6/);
 });
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);
