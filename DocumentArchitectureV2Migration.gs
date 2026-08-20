@@ -5,7 +5,7 @@
  * deliberately never inserts, deletes, moves, or rewrites columns or headers.
  * It resolves every field through SystemCore and is safe to run repeatedly.
  */
-function migrateDocumentsToArchitectureV2() {
+function migrateDocumentNumberStructure() {
   return withDocumentLock_(function () {
     assertSystemSheetsStructure_([
       'DOCUMENT_TYPES', 'DOCUMENTS', 'OPERATION_HISTORY', 'CHANGE_HISTORY'
@@ -20,16 +20,16 @@ function migrateDocumentsToArchitectureV2() {
     const documentRows = migrationReadRows_(documentContext);
     const typeIdColumn = migrationColumn_(typeContext, H.DOCUMENT_TYPE_ID);
     const typeNameColumn = migrationColumn_(typeContext, H.DOCUMENT_TYPE);
-    const types = {};
+    const typeCandidates = {};
 
     typeRows.forEach(function (row, offset) {
       const id = migrationText_(row[typeIdColumn]);
       const name = migrationText_(row[typeNameColumn]);
       if (!id || !name) return;
-      if (types[id] && types[id].name !== name) {
-        throw new Error('ID типа документа «' + id + '» связан с разными названиями в справочнике.');
-      }
-      types[id] = { name: name, row: typeContext.config.dataStartRow + offset };
+      if (!typeCandidates[id]) typeCandidates[id] = [];
+      typeCandidates[id].push({
+        name: name, row: typeContext.config.dataStartRow + offset
+      });
     });
 
     const indexes = {};
@@ -39,41 +39,66 @@ function migrateDocumentsToArchitectureV2() {
     });
     const changes = [];
     const changedRows = [];
+    const problems = [];
+    let checkedRows = 0;
+    let unchangedRows = 0;
     const now = new Date();
 
     documentRows.forEach(function (row, offset) {
+      if (row.every(migrationEmpty_)) return;
+      checkedRows += 1;
+      const sheetRow = documentContext.config.dataStartRow + offset;
       const typeId = migrationText_(row[indexes[H.DOCUMENT_TYPE_ID]]);
-      if (!typeId) return;
-      const canonical = types[typeId];
-      if (!canonical) {
-        throw new Error('В строке ' + (documentContext.config.dataStartRow + offset) +
-          ' неизвестный «' + H.DOCUMENT_TYPE_ID + '»: «' + typeId + '».');
+      if (!typeId) {
+        problems.push({ sheetRow: sheetRow, reason: 'Не заполнено «' + H.DOCUMENT_TYPE_ID + '».' });
+        return;
       }
+      const candidates = typeCandidates[typeId] || [];
+      if (candidates.length === 0) {
+        problems.push({ sheetRow: sheetRow, reason: 'Неизвестный «' + H.DOCUMENT_TYPE_ID + '»: «' + typeId + '».' });
+        return;
+      }
+      if (candidates.length !== 1) {
+        problems.push({
+          sheetRow: sheetRow,
+          reason: 'Неоднозначный «' + H.DOCUMENT_TYPE_ID + '»: «' + typeId +
+            '»; строки справочника: ' + candidates.map(function (item) {
+              return item.row;
+            }).join(', ') + '.'
+        });
+        return;
+      }
+      const canonical = candidates[0];
       const oldType = migrationText_(row[indexes[H.DOCUMENT_TYPE]]);
       const oldNumber = row[indexes[H.DOCUMENT_NUMBER]];
-      const number = documentArchitectureExtractLegacyNumber_(
-        oldType, canonical.name, oldNumber
-      );
-      if (migrationEmpty_(oldNumber) && !number &&
-          documentArchitectureHasLegacyMarker_(oldType, canonical.name)) {
-        throw new Error('В строке ' +
-          (documentContext.config.dataStartRow + offset) +
-          ' legacy-номер в поле «' + H.DOCUMENT_TYPE +
-          '» не является положительным целым числом. Миграция отменена.');
+      if (!oldType) {
+        problems.push({ sheetRow: sheetRow, reason: 'Не заполнено «' + H.DOCUMENT_TYPE + '».' });
+        return;
+      }
+      if (migrationEmpty_(oldNumber) && oldType !== canonical.name &&
+          !documentArchitectureExtractLegacyNumber_(oldType, canonical.name, '')) {
+        problems.push({
+          sheetRow: sheetRow,
+          reason: 'Небезопасное legacy-значение «' + oldType + '» для типа «' +
+            canonical.name + '».'
+        });
+        return;
       }
       const rowChanges = [];
       if (oldType !== canonical.name) {
         rowChanges.push({ header: H.DOCUMENT_TYPE, oldValue: oldType, newValue: canonical.name });
         row[indexes[H.DOCUMENT_TYPE]] = canonical.name;
       }
-      if (migrationEmpty_(oldNumber) && number) {
-        rowChanges.push({ header: H.DOCUMENT_NUMBER, oldValue: '', newValue: number });
-        row[indexes[H.DOCUMENT_NUMBER]] = number;
+      if (migrationEmpty_(oldNumber)) {
+        rowChanges.push({ header: H.DOCUMENT_NUMBER, oldValue: '', newValue: oldType });
+        row[indexes[H.DOCUMENT_NUMBER]] = oldType;
       }
-      if (!rowChanges.length) return;
+      if (!rowChanges.length) {
+        unchangedRows += 1;
+        return;
+      }
       row[indexes[H.UPDATED_AT]] = now;
       row[indexes[H.UPDATED_BY_EMAIL]] = email;
-      const sheetRow = documentContext.config.dataStartRow + offset;
       rowChanges.forEach(function (change) {
         changes.push({
           changeId: generateChangeId_(operationId, changes.length + 1),
@@ -91,9 +116,16 @@ function migrateDocumentsToArchitectureV2() {
     ]);
     migrationWriteHistory_(changes);
     migrationWriteOperation_(operationId, startedAt, new Date(), email,
-      changedRows.length, changes.length);
-    return { operationId: operationId, rowsChanged: changedRows.length,
-      fieldsChanged: changes.length };
+      changedRows.length, changes.length, problems);
+    return {
+      checkedRows: checkedRows,
+      changedRows: changedRows.length,
+      unchangedRows: unchangedRows,
+      skippedRows: problems.length,
+      warningsCount: problems.length,
+      problems: problems,
+      operationId: operationId
+    };
   });
 }
 
@@ -154,19 +186,26 @@ function migrationWriteHistory_(changes) {
   context.sheet.getRange(start, 1, rows.length, context.headers.length).setValues(rows);
 }
 
-function migrationWriteOperation_(id, startedAt, finishedAt, email, rows, fields) {
+function migrationWriteOperation_(id, startedAt, finishedAt, email, rows, fields,
+  problems) {
   const context = getSystemSheetContext_('OPERATION_HISTORY');
   const values = {};
   values[H.OPERATION_ID] = id; values[H.OPERATION_STARTED_AT] = startedAt;
   values[H.OPERATION_FINISHED_AT] = finishedAt; values[H.OPERATION_STARTED_BY] = email;
   values[H.OPERATION_SOURCE] = SYSTEM_CONFIG.VALUES.DOCUMENT_V2_MIGRATION_SOURCE;
   values[H.OPERATION_TYPE] = SYSTEM_CONFIG.VALUES.DOCUMENT_V2_MIGRATION_OPERATION_TYPE;
-  values[H.OPERATION_STATUS] = rows ? SYSTEM_CONFIG.VALUES.OPERATION_STATUS_SUCCESS :
-    SYSTEM_CONFIG.VALUES.OPERATION_STATUS_NO_CHANGES;
+  values[H.OPERATION_STATUS] = problems.length
+    ? SYSTEM_CONFIG.VALUES.OPERATION_STATUS_SUCCESS_WITH_WARNINGS
+    : rows ? SYSTEM_CONFIG.VALUES.OPERATION_STATUS_SUCCESS
+      : SYSTEM_CONFIG.VALUES.OPERATION_STATUS_NO_CHANGES;
   values[H.DOCUMENTS_CHANGED] = rows; values[H.FACT_ROWS_UPDATED] = rows;
   values[H.FIELDS_CHANGED] = fields; values[H.ERRORS_COUNT] = 0;
   values[H.EXECUTION_SECONDS] = (finishedAt.getTime() - startedAt.getTime()) / 1000;
-  values[H.ERROR_TEXT] = 'Структура листов не изменялась.';
+  values[H.ERROR_TEXT] = problems.length
+    ? 'Пропущено строк: ' + problems.length + '. ' + problems.map(function (problem) {
+      return 'строка ' + problem.sheetRow + ': ' + problem.reason;
+    }).join(' | ')
+    : 'Структура листов не изменялась.';
   const row = context.headers.map(function (header) {
     return Object.prototype.hasOwnProperty.call(values, header) ? values[header] : '';
   });

@@ -293,7 +293,12 @@ function webAppPositiveDocumentNumber_(value) {
 /** Отдельное поле имеет приоритет над legacy-суффиксом. */
 function webAppEffectiveDocumentNumber_(explicitNumber, storedType, canonicalType) {
   if (String(explicitNumber == null ? '' : explicitNumber).trim() !== '') {
-    return webAppPositiveDocumentNumber_(explicitNumber);
+    return webAppPositiveDocumentNumber_(explicitNumber) ||
+      webAppPositiveDocumentNumber_(
+        documentArchitectureExtractLegacyNumber_(
+          explicitNumber, canonicalType, ''
+        )
+      );
   }
   return webAppPositiveDocumentNumber_(
     documentArchitectureExtractLegacyNumber_(storedType, canonicalType, '')

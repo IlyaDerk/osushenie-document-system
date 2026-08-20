@@ -415,7 +415,10 @@ function readExistingCreationFacts_() {
   const objectIndex = creationColumnIndex_(context, H.OBJECT_ID);
   const typeIndex = creationColumnIndex_(context, H.DOCUMENT_TYPE_ID);
   const documentIndex = creationColumnIndex_(context, H.DOCUMENT_ID);
+  const documentTypeNameIndex = creationColumnIndex_(context, H.DOCUMENT_TYPE);
+  const documentNumberIndex = creationColumnIndex_(context, H.DOCUMENT_NUMBER);
   const keys = {};
+  const documentNumbersByKey = {};
   const documentIds = {};
   const incompleteFactRows = [];
 
@@ -437,6 +440,12 @@ function readExistingCreationFacts_() {
         keys[key] = [];
       }
       keys[key].push(sheetRow);
+      if (!documentNumbersByKey[key]) documentNumbersByKey[key] = [];
+      documentNumbersByKey[key].push({
+        documentType: row[documentTypeNameIndex],
+        documentNumber: row[documentNumberIndex],
+        sheetRow: sheetRow
+      });
     }
     if (documentId) {
       if (!documentIds[documentId]) {
@@ -470,6 +479,7 @@ function readExistingCreationFacts_() {
   return {
     rows: rows,
     keys: keys,
+    documentNumbersByKey: documentNumbersByKey,
     documentIds: documentIds,
     duplicateObjectTypeKeys: duplicateObjectTypeKeys,
     duplicateDocumentIds: duplicateDocumentIds,
@@ -535,12 +545,17 @@ function prepareDocumentRows_(
     usedIds[documentId] = true;
 
     const values = {};
+    const typeKey = creationCompositeKey_(item.object.id, item.rule.id);
+    const documentNumber = findNextCreationTypeDocumentNumber_(
+      facts.documentNumbersByKey && facts.documentNumbersByKey[typeKey],
+      item.rule.name
+    );
     values[H.DOCUMENT_ID] = documentId;
     values[H.OBJECT_ID] = item.object.id;
     values[H.OBJECT_NAME] = item.object.name;
     values[H.DOCUMENT_TYPE] = item.rule.name;
     values[H.CONTRACT_NUMBER] = item.object.contractNumber;
-    values[H.DOCUMENT_NUMBER] = '';
+    values[H.DOCUMENT_NUMBER] = documentNumber;
     values[H.DOCUMENT_STATUS] =
       SYSTEM_CONFIG.VALUES.INITIAL_DOCUMENT_STATUS;
     values[H.OBJECT_STATUS] = item.object.objectStatus;
@@ -577,6 +592,33 @@ function prepareDocumentRows_(
     );
   });
   return { documentRows: documentRows, changeRows: changeRows };
+}
+
+/** Next positive instance number inside one object/type key. */
+function findNextCreationTypeDocumentNumber_(existing, canonicalType) {
+  const maximum = (existing || []).reduce(function (current, item) {
+    const explicit = String(item.documentNumber == null
+      ? '' : item.documentNumber).trim();
+    let number = /^\d+$/.test(explicit) ? Number(explicit) : null;
+    if (!(Number.isSafeInteger(number) && number > 0) && explicit) {
+      const migrated = documentArchitectureExtractLegacyNumber_(
+        explicit, canonicalType, ''
+      );
+      number = migrated ? Number(migrated) : null;
+    }
+    if (!(Number.isSafeInteger(number) && number > 0) && !explicit) {
+      const legacy = documentArchitectureExtractLegacyNumber_(
+        item.documentType, canonicalType, ''
+      );
+      number = legacy ? Number(legacy) : null;
+    }
+    return Number.isSafeInteger(number) && number > 0
+      ? Math.max(current, number) : current;
+  }, 0);
+  if (maximum >= Number.MAX_SAFE_INTEGER) {
+    throw new Error('Исчерпан диапазон номеров документа.');
+  }
+  return maximum + 1;
 }
 
 

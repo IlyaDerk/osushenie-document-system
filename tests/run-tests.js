@@ -3,7 +3,7 @@ const assert = require('assert');
 const fs = require('fs');
 const vm = require('vm');
 const cp = require('child_process');
-const files = ['SystemCore.gs', 'DocumentArchitectureCore.gs', 'CreateObjectDocuments.gs', 'SyncObjectData.gs', 'ArchiveChangeHistory.gs', 'OperatorCard.gs', 'OperatorCardSave.gs', 'ObjectSheetControls.gs', 'Code.gs', 'WebAppAuth.gs', 'DocumentWebAppServer.gs', 'DocumentArchitectureMigration.gs'];
+const files = ['SystemCore.gs', 'DocumentArchitectureCore.gs', 'CreateObjectDocuments.gs', 'SyncObjectData.gs', 'ArchiveChangeHistory.gs', 'OperatorCard.gs', 'OperatorCardSave.gs', 'ObjectSheetControls.gs', 'Code.gs', 'WebAppAuth.gs', 'DocumentWebAppServer.gs', 'DocumentArchitectureV2Migration.gs'];
 const source = files.map(f => fs.readFileSync(f, 'utf8')).join('\n');
 let passed = 0;
 function test(name, fn) {
@@ -330,9 +330,9 @@ function creationPrepareFixture(count) {
   const ctx = baseContext();
   ctx.getSystemSpreadsheet_ = () => ({ getSpreadsheetTimeZone: () => 'UTC' });
   const headers = [
-    'ID документа','ID объекта','Название объекта','Тип документа','ID типа документа','Номер договора','Статус документа',
+    'ID документа','ID объекта','Название объекта','Тип документа','ID типа документа','Номер договора','Номер документа','Статус документа',
     'Статус объекта','Дата начала работ','Дата окончания (по плану)','Дата окончания (по факту)',
-    'Дата создания','Дата обновления','Кто обновил (email)','Ответственный прораб','ID ответственного прораба',
+    'Дата создания','Дата обновления','Кто обновил (email)','Ответственный прораб','ID ответственного прораба','Кто ответственный за подписание (заказчик)',
     'Дата изменения статуса документа','Источник создания','Статус записи'
   ];
   const context = { headers, headerMap: Object.fromEntries(headers.map((h, i) => [h, i + 1])) };
@@ -363,7 +363,7 @@ test('24. 18 created documents produce 18 history rows, not field-per-value rows
 test('25. initial creation snapshot contains main nonempty fields', () => {
   const snapshot = creationPrepareFixture(1).changeRows[0].newValue;
   ['ID документа: DOC-OBJ01-0001','ID объекта: OBJ01','Название объекта: Объект 1','Тип документа: Акт','ID типа документа: DT-1',
-   'Номер договора: DOG-1','Статус документа: Ожидает заполнения','Статус объекта: Действующий',
+   'Номер договора: DOG-1','Номер документа: 1','Статус документа: Ожидает заполнения','Статус объекта: Действующий',
    'Дата начала работ:','Дата окончания (по плану):','Дата окончания (по факту):',
    'Ответственный прораб: Иванов','ID ответственного прораба: ST-1','Источник создания: Создание документов по объекту',
    'Статус записи: Активная'].forEach(part => assert.ok(snapshot.includes(part), part));
@@ -1603,7 +1603,7 @@ test('146. v2 migration extracts only a suffix number and preserves an existing 
   assert.equal(ctx.documentArchitectureExtractLegacyNumber_('Дополнительное соглашение №3','Дополнительное соглашение','ручной-5'),'');
 });
 test('147. v2 migration is data-only and uses centralized contracts', () => {
-  const text=fs.readFileSync('DocumentArchitectureMigration.gs','utf8');
+  const text=fs.readFileSync('DocumentArchitectureV2Migration.gs','utf8');
   assert.doesNotMatch(text,/insertColumn|deleteColumn|moveColumn|setFrozen|setName/);
   assert.match(text,/assertSystemSheetsStructure_/);
   assert.match(text,/H\.DOCUMENT_NUMBER/);
@@ -1619,6 +1619,9 @@ test('148. Web App numbering uses max plus one and never fills gaps', () => {
   assert.equal(ctx.webAppNextDocumentNumber_([],'КС-2'),1);
   assert.equal(ctx.webAppDocumentNumberOccupied_(documents,'КС-2',4),true);
   assert.equal(ctx.webAppDocumentNumberOccupied_(documents,'КС-2',5),false);
+  assert.equal(ctx.webAppNextDocumentNumber_([
+    {documentType:'КС-2',storedDocumentType:'КС-2',documentNumber:'КС-2 №7'}
+  ],'КС-2'),8);
 });
 
 test('149. Web App numbering supports legacy suffix with explicit-number priority', () => {
@@ -1687,7 +1690,7 @@ test('153. creation snapshot keeps canonical type and separate document number',
 test('154. standalone Web App loads and numbers without migration module', () => {
   const standaloneFiles=['SystemCore.gs','DocumentArchitectureCore.gs',
     'CreateObjectDocuments.gs','WebAppAuth.gs','DocumentWebAppServer.gs'];
-  assert.ok(!standaloneFiles.includes('DocumentArchitectureMigration.gs'));
+  assert.ok(!standaloneFiles.includes('DocumentArchitectureV2Migration.gs'));
   const standaloneSource=standaloneFiles.map(file=>fs.readFileSync(file,'utf8')).join('\n');
   const sandbox={console,Number,Date,Math}; vm.createContext(sandbox);
   vm.runInContext(standaloneSource,sandbox);
@@ -1708,7 +1711,7 @@ test('155. shared legacy parser accepts only a positive trailing integer', () =>
 
 test('156. creation and sync preserve v2 document-owned fields', () => {
   const create=fs.readFileSync('CreateObjectDocuments.gs','utf8');
-  assert.match(create,/values\[H\.DOCUMENT_NUMBER\] = ''/);
+  assert.match(create,/findNextCreationTypeDocumentNumber_/);
   assert.match(create,/values\[H\.CUSTOMER_SIGNING_RESPONSIBLE\] = ''/);
   const syncFields=Array.from(vm.runInContext('OBJECT_SYNC_FIELDS_',baseContext()));
   assert.ok(!syncFields.includes('Тип документа'));
@@ -1716,6 +1719,48 @@ test('156. creation and sync preserve v2 document-owned fields', () => {
   assert.ok(!syncFields.includes('Кто ответственный за подписание (заказчик)'));
   assert.equal(baseContext().assertObjectSyncFieldContract_(),undefined);
   assert.match(fs.readFileSync('SyncObjectData.gs','utf8'),/assertObjectSyncFieldContract_\(\)/);
+  assert.equal(baseContext().findNextCreationTypeDocumentNumber_([
+    {documentType:'Акт',documentNumber:'Акт №4'}
+  ],'Акт'),5);
+});
+
+test('157. migration partially skips problems and returns the exact report contract', () => {
+  const ctx=baseContext();
+  const documentHeaders=Array.from(vm.runInContext('SYSTEM_CONFIG.SHEETS.DOCUMENTS.requiredHeaders',ctx));
+  const typeHeaders=['ID типа документа','Тип документа'];
+  const historyHeaders=['ID изменения','ID операции','Дата и время изменения','Кто изменил (email)','Тип действия','ID документа','ID объекта','Номер строки в таблице фактов','Название поля','Старое значение','Новое значение','Источник изменения'];
+  const operationHeaders=Array.from(vm.runInContext('SYSTEM_CONFIG.SHEETS.OPERATION_HISTORY.requiredHeaders',ctx));
+  const row=values=>documentHeaders.map(header=>Object.prototype.hasOwnProperty.call(values,header)?values[header]:'');
+  const documentRows=[
+    row({'ID документа':'D1','ID объекта':'O1','ID типа документа':'T1','Тип документа':'Дополнительное соглашение №3'}),
+    row({'ID документа':'D2','ID объекта':'O1','Тип документа':'Дополнительное соглашение №4'}),
+    row({'ID документа':'D3','ID объекта':'O1','ID типа документа':'UNKNOWN','Тип документа':'X'}),
+    row({'ID документа':'D4','ID объекта':'O1','ID типа документа':'DUP','Тип документа':'Дубль'}),
+    row({'ID документа':'D5','ID объекта':'O1','ID типа документа':'T1','Тип документа':'Дополнительное соглашение №X'}),
+    row({'ID документа':'D6','ID объекта':'O1','ID типа документа':'T1','Тип документа':'Дополнительное соглашение','Номер документа':'already'})
+  ];
+  const writes=[];
+  function context(headers,dataStartRow,rows) {
+    return {headers,headerMap:Object.fromEntries(headers.map((header,index)=>[header,index+1])),config:{dataStartRow},sheet:{
+      getLastRow:()=>dataStartRow+rows.length-1,
+      getRange(start,column,count,width){return {getValues:()=>rows,setValues(values){writes.push({start,column,count,width,values})}}}
+    }};
+  }
+  const contexts={
+    DOCUMENT_TYPES:context(typeHeaders,5,[['T1','Дополнительное соглашение'],['DUP','Дубль'],['DUP','Дубль']]),
+    DOCUMENTS:context(documentHeaders,4,documentRows),
+    CHANGE_HISTORY:context(historyHeaders,3,[]),
+    OPERATION_HISTORY:context(operationHeaders,3,[])
+  };
+  ctx.withDocumentLock_=callback=>callback(); ctx.assertSystemSheetsStructure_=()=>{};
+  ctx.generateOperationId_=()=> 'OP-1'; ctx.generateChangeId_=(id,n)=>'CHG-'+n;
+  ctx.getActiveUserEmail_=()=> 'actor'; ctx.getSystemSheetContext_=key=>contexts[key];
+  const report=ctx.migrateDocumentNumberStructure();
+  assert.deepEqual(Object.keys(report),['checkedRows','changedRows','unchangedRows','skippedRows','warningsCount','problems','operationId']);
+  assert.deepEqual({...report,problems:undefined},{checkedRows:6,changedRows:1,unchangedRows:1,skippedRows:4,warningsCount:4,problems:undefined,operationId:'OP-1'});
+  assert.equal(report.problems.length,4); assert.ok(report.problems.every(problem=>Number.isInteger(problem.sheetRow)&&problem.reason));
+  const numberWrite=writes.find(write=>write.column===documentHeaders.indexOf('Номер документа')+1);
+  assert.equal(numberWrite.values[0][0],'Дополнительное соглашение №3');
 });
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);
