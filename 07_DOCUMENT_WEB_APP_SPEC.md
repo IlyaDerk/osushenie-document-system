@@ -72,9 +72,10 @@ ID операции. Бизнес-блокировка `Один` пишет о�
 ## Ручная публикация
 
 1. Добавить/обновить файлы проекта Apps Script: `SystemCore.gs`,
-   `DocumentArchitectureMigration.gs`, `WebAppAuth.gs`,
+   `DocumentArchitectureCore.gs`, `CreateObjectDocuments.gs`, `WebAppAuth.gs`,
    `DocumentWebAppServer.gs`, `DocumentWebApp.html`. HTML
    остаётся `DocumentWebApp`, поэтому `doGet()` открывает его по прежнему имени.
+   `DocumentArchitectureMigration.gs` для работы отдельного Web App не требуется.
 2. Открыть редактор Apps Script из основной таблицы и один раз вручную выполнить
    `setupSystemSpreadsheetConnection()`. Функция сохранит ID активной таблицы в
    Script Property `SYSTEM_SPREADSHEET_ID`, не изменяя листы или их данные.

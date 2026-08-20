@@ -3,7 +3,7 @@ const assert = require('assert');
 const fs = require('fs');
 const vm = require('vm');
 const cp = require('child_process');
-const files = ['SystemCore.gs', 'CreateObjectDocuments.gs', 'SyncObjectData.gs', 'ArchiveChangeHistory.gs', 'OperatorCard.gs', 'OperatorCardSave.gs', 'ObjectSheetControls.gs', 'Code.gs', 'WebAppAuth.gs', 'DocumentWebAppServer.gs', 'DocumentArchitectureMigration.gs'];
+const files = ['SystemCore.gs', 'DocumentArchitectureCore.gs', 'CreateObjectDocuments.gs', 'SyncObjectData.gs', 'ArchiveChangeHistory.gs', 'OperatorCard.gs', 'OperatorCardSave.gs', 'ObjectSheetControls.gs', 'Code.gs', 'WebAppAuth.gs', 'DocumentWebAppServer.gs', 'DocumentArchitectureMigration.gs'];
 const source = files.map(f => fs.readFileSync(f, 'utf8')).join('\n');
 let passed = 0;
 function test(name, fn) {
@@ -1608,6 +1608,8 @@ test('147. v2 migration is data-only and uses centralized contracts', () => {
   assert.match(text,/assertSystemSheetsStructure_/);
   assert.match(text,/H\.DOCUMENT_NUMBER/);
   assert.match(text,/DOCUMENT_V2_MIGRATION_SOURCE/);
+  assert.doesNotMatch(text,/\.setValue\s*\(/);
+  assert.match(text,/\.setValues\(group\.values\)/);
 });
 
 test('148. Web App numbering uses max plus one and never fills gaps', () => {
@@ -1680,6 +1682,40 @@ test('153. creation snapshot keeps canonical type and separate document number',
   assert.match(snapshot,/Тип документа: КС-2/);
   assert.match(snapshot,/Номер документа: 6/);
   assert.doesNotMatch(snapshot,/КС-2 №6/);
+});
+
+test('154. standalone Web App loads and numbers without migration module', () => {
+  const standaloneFiles=['SystemCore.gs','DocumentArchitectureCore.gs',
+    'CreateObjectDocuments.gs','WebAppAuth.gs','DocumentWebAppServer.gs'];
+  assert.ok(!standaloneFiles.includes('DocumentArchitectureMigration.gs'));
+  const standaloneSource=standaloneFiles.map(file=>fs.readFileSync(file,'utf8')).join('\n');
+  const sandbox={console,Number,Date,Math}; vm.createContext(sandbox);
+  vm.runInContext(standaloneSource,sandbox);
+  assert.equal(sandbox.documentArchitectureExtractLegacyNumber_('КС-2 №4','КС-2',''),'4');
+  assert.equal(sandbox.webAppNextDocumentNumber_([
+    {documentType:'КС-2',storedDocumentType:'КС-2 №4',documentNumber:''}
+  ],'КС-2'),5);
+});
+
+test('155. shared legacy parser accepts only a positive trailing integer', () => {
+  const ctx=baseContext();
+  assert.equal(ctx.documentArchitectureExtractLegacyNumber_('КС-2 №003','КС-2',''),'3');
+  for(const value of ['КС-2 №0','КС-2 №-1','КС-2 №2.5','КС-2 №3 копия','КС-2 2026']) {
+    assert.equal(ctx.documentArchitectureExtractLegacyNumber_(value,'КС-2',''),'',value);
+  }
+  assert.equal(ctx.documentArchitectureExtractLegacyNumber_('КС-2 №99','КС-2','7'),'');
+});
+
+test('156. creation and sync preserve v2 document-owned fields', () => {
+  const create=fs.readFileSync('CreateObjectDocuments.gs','utf8');
+  assert.match(create,/values\[H\.DOCUMENT_NUMBER\] = ''/);
+  assert.match(create,/values\[H\.CUSTOMER_SIGNING_RESPONSIBLE\] = ''/);
+  const syncFields=Array.from(vm.runInContext('OBJECT_SYNC_FIELDS_',baseContext()));
+  assert.ok(!syncFields.includes('Тип документа'));
+  assert.ok(!syncFields.includes('Номер документа'));
+  assert.ok(!syncFields.includes('Кто ответственный за подписание (заказчик)'));
+  assert.equal(baseContext().assertObjectSyncFieldContract_(),undefined);
+  assert.match(fs.readFileSync('SyncObjectData.gs','utf8'),/assertObjectSyncFieldContract_\(\)/);
 });
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);

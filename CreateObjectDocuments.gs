@@ -540,6 +540,7 @@ function prepareDocumentRows_(
     values[H.OBJECT_NAME] = item.object.name;
     values[H.DOCUMENT_TYPE] = item.rule.name;
     values[H.CONTRACT_NUMBER] = item.object.contractNumber;
+    values[H.DOCUMENT_NUMBER] = '';
     values[H.DOCUMENT_STATUS] =
       SYSTEM_CONFIG.VALUES.INITIAL_DOCUMENT_STATUS;
     values[H.OBJECT_STATUS] = item.object.objectStatus;
@@ -552,6 +553,7 @@ function prepareDocumentRows_(
     values[H.UPDATED_BY_EMAIL] = userEmail;
     values[H.RESPONSIBLE_FOREMAN] = item.object.responsibleForeman;
     values[H.RESPONSIBLE_FOREMAN_ID] = item.object.responsibleForemanId;
+    values[H.CUSTOMER_SIGNING_RESPONSIBLE] = '';
     values[H.DOCUMENT_STATUS_CHANGED_AT] = now;
     values[H.CREATION_SOURCE] =
       SYSTEM_CONFIG.VALUES.OBJECT_CREATION_SOURCE;

@@ -54,6 +54,13 @@ function migrateDocumentsToArchitectureV2() {
       const number = documentArchitectureExtractLegacyNumber_(
         oldType, canonical.name, oldNumber
       );
+      if (migrationEmpty_(oldNumber) && !number &&
+          documentArchitectureHasLegacyMarker_(oldType, canonical.name)) {
+        throw new Error('В строке ' +
+          (documentContext.config.dataStartRow + offset) +
+          ' legacy-номер в поле «' + H.DOCUMENT_TYPE +
+          '» не является положительным целым числом. Миграция отменена.');
+      }
       const rowChanges = [];
       if (oldType !== canonical.name) {
         rowChanges.push({ header: H.DOCUMENT_TYPE, oldValue: oldType, newValue: canonical.name });
@@ -90,14 +97,6 @@ function migrateDocumentsToArchitectureV2() {
   });
 }
 
-function documentArchitectureExtractLegacyNumber_(currentType, canonicalType,
-  existingNumber) {
-  if (!migrationEmpty_(existingNumber) || !currentType || currentType === canonicalType) return '';
-  const escaped = canonicalType.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = currentType.match(new RegExp('^' + escaped + '\\s*(?:[\u2014\u2013-]\s*)?№\\s*(.+)$', 'i'));
-  return match ? migrationText_(match[1]) : '';
-}
-
 function migrationReadRows_(context) {
   const count = context.sheet.getLastRow() - context.config.dataStartRow + 1;
   return count > 0 ? context.sheet.getRange(context.config.dataStartRow, 1,
@@ -114,8 +113,23 @@ function migrationEmpty_(value) { return value == null || migrationText_(value) 
 function migrationWriteColumns_(context, items, headers) {
   headers.forEach(function (header) {
     const index = migrationColumn_(context, header);
-    items.forEach(function (item) {
-      context.sheet.getRange(item.sheetRow, index + 1).setValue(item.row[index]);
+    const sorted = items.slice().sort(function (left, right) {
+      return left.sheetRow - right.sheetRow;
+    });
+    const groups = [];
+    sorted.forEach(function (item) {
+      const group = groups[groups.length - 1];
+      const value = [item.row[index]];
+      if (group && item.sheetRow === group.startRow + group.values.length) {
+        group.values.push(value);
+      } else {
+        groups.push({ startRow: item.sheetRow, values: [value] });
+      }
+    });
+    groups.forEach(function (group) {
+      context.sheet.getRange(
+        group.startRow, index + 1, group.values.length, 1
+      ).setValues(group.values);
     });
   });
 }
