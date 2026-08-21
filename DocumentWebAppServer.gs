@@ -33,15 +33,17 @@ function webAppGetExistingDocuments(sessionToken, objectId, documentTypeId) {
   assertSystemSheetsStructure_(['OBJECTS', 'DOCUMENT_TYPES', 'DOCUMENTS']);
   const object = webAppFindObject_(objectId);
   const type = webAppFindDocumentType_(documentTypeId);
-  const existing = webAppReadMatchingDocuments_(object.id, type.id);
-  const blocked = type.repeatability === 'Один' && existing.length > 0;
+  const existing = webAppReadMatchingDocuments_(object.id, type.id, type.name);
+  const blocked = type.repeatability === SYSTEM_CONFIG.VALUES.DOCUMENT_REPEATABILITY_ONE && existing.length > 0;
+  const nextNumber = type.repeatability === SYSTEM_CONFIG.VALUES.DOCUMENT_REPEATABILITY_MANY
+    ? webAppNextDocumentNumber_(existing, type.name) : '';
   return {
     objectName: object.name,
     documentType: { id: type.id, name: type.name, repeatability: type.repeatability },
     documents: existing,
     allowed: !blocked,
-    nextDocumentName: type.repeatability === 'Много'
-      ? type.name + ' №' + (existing.length + 1) : '',
+    nextDocumentName: type.repeatability === SYSTEM_CONFIG.VALUES.DOCUMENT_REPEATABILITY_MANY
+      ? webAppDisplayDocumentName_(type.name, nextNumber) : '',
     warning: blocked
       ? 'Документ этого типа уже существует.\n' +
         'Повторяемость типа документа — «Один», поэтому создать второй документ нельзя.' : ''
@@ -69,8 +71,10 @@ function webAppCreateDocument(sessionToken, payload) {
       if (statuses.indexOf(clean.documentStatus) < 0) {
         throw new Error('Выбран несуществующий статус документа.');
       }
-      const existing = webAppReadMatchingDocuments_(object.id, type.id);
-      if (type.repeatability === 'Один' && existing.length > 0) {
+      // Окончательный номер всегда рассчитывается после повторного
+      // чтения фактов внутри общей блокировки.
+      const existing = webAppReadMatchingDocuments_(object.id, type.id, type.name);
+      if (type.repeatability === SYSTEM_CONFIG.VALUES.DOCUMENT_REPEATABILITY_ONE && existing.length > 0) {
         webAppWriteOperation_({
           operationId: operationId, startedAt: startedAt, finishedAt: new Date(),
           actor: user.actor, status: SYSTEM_CONFIG.VALUES.OPERATION_STATUS_NO_CHANGES,
@@ -90,10 +94,16 @@ function webAppCreateDocument(sessionToken, payload) {
         documentsContext.config.dataStartRow
       );
       const now = new Date();
-      const name = type.repeatability === 'Много'
-        ? type.name + ' №' + (existing.length + 1) : type.name;
+      const documentNumber = type.repeatability === SYSTEM_CONFIG.VALUES.DOCUMENT_REPEATABILITY_MANY
+        ? webAppNextDocumentNumber_(existing, type.name) : '';
+      if (documentNumber !== '' && webAppDocumentNumberOccupied_(
+        existing, type.name, documentNumber
+      )) {
+        throw new Error('Рассчитанный номер документа уже занят. Обновите данные.');
+      }
       const prepared = webAppPrepareDocument_(
-        object, type, name, clean.documentStatus, fact, documentsContext,
+        object, type, type.name, documentNumber, clean.documentStatus,
+        fact, documentsContext,
         factRow, now, user.actor, operationId
       );
       documentsContext.sheet.getRange(
@@ -108,7 +118,9 @@ function webAppCreateDocument(sessionToken, payload) {
         changed: 1, errors: 0, comment: 'Документ создан: ' + prepared.documentId
       });
       return {
-        ok: true, objectName: object.name, documentName: name,
+        ok: true, objectName: object.name,
+        documentType: type.name, documentNumber: documentNumber,
+        documentName: webAppDisplayDocumentName_(type.name, documentNumber),
         documentStatus: clean.documentStatus, documentId: prepared.documentId
       };
     } catch (error) {
@@ -178,7 +190,10 @@ function webAppFindDocumentType_(id) {
   return matches[0];
 }
 
-function webAppValidRepeatability_(value) { return value === 'Один' || value === 'Много'; }
+function webAppValidRepeatability_(value) {
+  return value === SYSTEM_CONFIG.VALUES.DOCUMENT_REPEATABILITY_ONE ||
+    value === SYSTEM_CONFIG.VALUES.DOCUMENT_REPEATABILITY_MANY;
+}
 
 function webAppFindObject_(id) {
   const cleanId = String(id == null ? '' : id).trim();
@@ -213,15 +228,28 @@ function webAppReadStatuses_() {
   return statuses;
 }
 
-function webAppReadMatchingDocuments_(objectId, typeId) {
+function webAppReadMatchingDocuments_(objectId, typeId, canonicalDocumentType) {
   const context = getSystemSheetContext_('DOCUMENTS');
-  const fields = [H.OBJECT_ID, H.DOCUMENT_TYPE_ID, H.DOCUMENT_TYPE, H.DOCUMENT_ID, H.DOCUMENT_STATUS, H.RECORD_STATUS, H.CREATED_AT];
+  const fields = [H.OBJECT_ID, H.DOCUMENT_TYPE_ID, H.DOCUMENT_TYPE,
+    H.DOCUMENT_NUMBER, H.DOCUMENT_ID, H.DOCUMENT_STATUS, H.RECORD_STATUS,
+    H.CREATED_AT];
   const indexes = webAppIndexes_(context, fields);
   return webAppReadRows_(context).reduce(function (items, row) {
     if (String(row[indexes[H.OBJECT_ID]]).trim() !== objectId ||
         String(row[indexes[H.DOCUMENT_TYPE_ID]]).trim() !== typeId) return items;
+    const storedType = String(row[indexes[H.DOCUMENT_TYPE]] == null
+      ? '' : row[indexes[H.DOCUMENT_TYPE]]).trim();
+    const canonicalType = canonicalDocumentType || storedType;
+    const explicitNumber = row[indexes[H.DOCUMENT_NUMBER]];
+    const effectiveNumber = webAppEffectiveDocumentNumber_(
+      explicitNumber, storedType, canonicalType
+    );
     items.push({
-      documentType: row[indexes[H.DOCUMENT_TYPE]], documentId: row[indexes[H.DOCUMENT_ID]],
+      documentType: canonicalType,
+      storedDocumentType: storedType,
+      documentNumber: webAppClientValue_(explicitNumber),
+      displayName: webAppDisplayDocumentName_(canonicalType, effectiveNumber),
+      documentId: row[indexes[H.DOCUMENT_ID]],
       documentStatus: row[indexes[H.DOCUMENT_STATUS]], recordStatus: row[indexes[H.RECORD_STATUS]],
       createdAt: webAppClientValue_(row[indexes[H.CREATED_AT]])
     });
@@ -229,14 +257,17 @@ function webAppReadMatchingDocuments_(objectId, typeId) {
   }, []);
 }
 
-function webAppPrepareDocument_(object, type, name, status, facts, context, factRow, now, actor, operationId) {
+function webAppPrepareDocument_(object, type, canonicalDocumentType,
+  documentNumber, status, facts, context, factRow, now, actor, operationId) {
   const number = findNextCreationDocumentNumber_(object.id, facts.documentIds);
   if (number > 9999) throw new Error('Невозможно безопасно сгенерировать ID документа.');
   const documentId = SYSTEM_CONFIG.ID_PREFIXES.DOCUMENT + object.id + '-' + creationPadFour_(number);
   if (facts.documentIds[documentId]) throw new Error('Невозможно безопасно сгенерировать ID документа.');
   const values = {};
   values[H.DOCUMENT_ID] = documentId; values[H.OBJECT_ID] = object.id;
-  values[H.OBJECT_NAME] = object.name; values[H.DOCUMENT_TYPE] = name;
+  values[H.OBJECT_NAME] = object.name;
+  values[H.DOCUMENT_TYPE] = canonicalDocumentType;
+  values[H.DOCUMENT_NUMBER] = documentNumber;
   values[H.CONTRACT_NUMBER] = object.contractNumber; values[H.DOCUMENT_STATUS] = status;
   values[H.OBJECT_STATUS] = object.objectStatus; values[H.WORK_START_DATE] = object.workStartDate;
   values[H.WORK_END_PLAN] = object.workEndPlan; values[H.WORK_END_FACT] = object.workEndFact;
@@ -252,6 +283,57 @@ function webAppPrepareDocument_(object, type, name, status, facts, context, fact
       changedAt: now, actor: actor, documentId: documentId, objectId: object.id,
       factRow: factRow, snapshot: buildCreationInitialSnapshot_(values) }
   };
+}
+
+/** Возвращает только положительный целый номер. */
+function webAppPositiveDocumentNumber_(value) {
+  const text = String(value == null ? '' : value).trim();
+  if (!/^\d+$/.test(text)) return null;
+  const number = Number(text);
+  return Number.isSafeInteger(number) && number > 0 ? number : null;
+}
+
+/** Отдельное поле имеет приоритет над legacy-суффиксом. */
+function webAppEffectiveDocumentNumber_(explicitNumber, storedType, canonicalType) {
+  if (String(explicitNumber == null ? '' : explicitNumber).trim() !== '') {
+    return webAppPositiveDocumentNumber_(explicitNumber) ||
+      webAppPositiveDocumentNumber_(
+        documentArchitectureExtractLegacyNumber_(
+          explicitNumber, canonicalType, ''
+        )
+      );
+  }
+  return webAppPositiveDocumentNumber_(
+    documentArchitectureExtractLegacyNumber_(storedType, canonicalType, '')
+  );
+}
+
+function webAppNextDocumentNumber_(documents, canonicalType) {
+  const maximum = documents.reduce(function (current, document) {
+    const number = webAppEffectiveDocumentNumber_(
+      document.documentNumber, document.storedDocumentType || document.documentType,
+      canonicalType
+    );
+    return number == null ? current : Math.max(current, number);
+  }, 0);
+  if (maximum >= Number.MAX_SAFE_INTEGER) {
+    throw new Error('Исчерпан диапазон номеров документа.');
+  }
+  return maximum + 1;
+}
+
+function webAppDocumentNumberOccupied_(documents, canonicalType, number) {
+  return documents.some(function (document) {
+    return webAppEffectiveDocumentNumber_(
+      document.documentNumber, document.storedDocumentType || document.documentType,
+      canonicalType
+    ) === number;
+  });
+}
+
+function webAppDisplayDocumentName_(canonicalType, documentNumber) {
+  return documentNumber === '' || documentNumber == null
+    ? canonicalType : canonicalType + ' №' + documentNumber;
 }
 
 function webAppWriteChange_(change) {

@@ -3,12 +3,33 @@ const OBJECT_SYNC_FIELDS_ = Object.freeze([
   H.OBJECT_NAME,
   H.CONTRACT_NUMBER,
   H.OBJECT_STATUS,
-  H.WORK_START_DATE,
-  H.WORK_END_PLAN,
-  H.WORK_END_FACT,
   H.RESPONSIBLE_FOREMAN,
   H.RESPONSIBLE_FOREMAN_ID
 ]);
+
+/** Guards v2 document-owned fields from accidental object synchronization. */
+function assertObjectSyncFieldContract_() {
+  const documentOwned = [
+    H.DOCUMENT_TYPE,
+    H.DOCUMENT_TYPE_ID,
+    H.DOCUMENT_NUMBER,
+    H.DOCUMENT_DATE,
+    H.CUSTOMER_SIGNING_RESPONSIBLE,
+    H.WORK_START_DATE,
+    H.WORK_END_PLAN,
+    H.WORK_END_FACT
+  ];
+  const conflicts = OBJECT_SYNC_FIELDS_.filter(function (header) {
+    return documentOwned.indexOf(header) !== -1;
+  });
+  if (conflicts.length > 0) {
+    throw new Error(
+      'Ошибка контракта синхронизации: документные поля не могут ' +
+      'копироваться из листа «' + SYSTEM_CONFIG.SHEETS.OBJECTS.name + '»: ' +
+      conflicts.join(', ')
+    );
+  }
+}
 
 /** Ручной запуск кнопки «Синхронизировать данные объектов». */
 function syncObjectDataToDocuments() {
@@ -61,6 +82,7 @@ function syncObjectDataToDocuments() {
 
 /** Вся проверка, повторное чтение и запись выполняются под общей блокировкой. */
 function syncObjectDataUnderLock_(operationId, startedAt, userEmail) {
+  assertObjectSyncFieldContract_();
   assertSystemSheetsStructure_([
     'OBJECTS',
     'DOCUMENTS',
@@ -194,18 +216,6 @@ function readObjectSyncSource_() {
     const reasons = [];
     if (idRows[candidate.id].length > 1) {
       reasons.push('ID объекта повторяется в строках ' + idRows[candidate.id].join(', '));
-    }
-    [H.WORK_START_DATE, H.WORK_END_PLAN, H.WORK_END_FACT].forEach(function (header) {
-      const value = candidate.row[indexes[header]];
-      if (!objectSyncEmpty_(value) && !objectSyncValidDate_(value)) {
-        reasons.push('поле «' + header + '» не является корректной датой');
-      }
-    });
-    const start = candidate.row[indexes[H.WORK_START_DATE]];
-    const plan = candidate.row[indexes[H.WORK_END_PLAN]];
-    if (objectSyncValidDate_(start) && objectSyncValidDate_(plan) &&
-        plan.getTime() < start.getTime()) {
-      reasons.push('плановое окончание раньше даты начала работ');
     }
     if (reasons.length > 0) {
       skips.push({ sheetRow: candidate.sheetRow, id: candidate.id, reasons: reasons });
@@ -531,8 +541,7 @@ function objectSyncValidDate_(value) {
   return value instanceof Date && !isNaN(value.getTime());
 }
 function objectSyncDateHeader_(header) {
-  return header === H.WORK_START_DATE || header === H.WORK_END_PLAN ||
-    header === H.WORK_END_FACT || header === H.UPDATED_AT;
+  return header === H.UPDATED_AT;
 }
 function objectSyncEqual_(left, right, isDate) {
   if (objectSyncEmpty_(left) && objectSyncEmpty_(right)) return true;

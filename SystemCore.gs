@@ -39,6 +39,7 @@ const SYSTEM_HEADERS = Object.freeze({
   // Основные поля документа
   DOCUMENT_TYPE: 'Тип документа',
   CONTRACT_NUMBER: 'Номер договора',
+  DOCUMENT_NUMBER: 'Номер документа',
   DOCUMENT_DATE: 'Дата документа',
   DOCUMENT_STATUS: 'Статус документа',
   ORIGINAL_EDO: 'Оригинал / ЭДО',
@@ -48,6 +49,8 @@ const SYSTEM_HEADERS = Object.freeze({
   DOCUMENT_HOLDER: 'У кого документ',
   DOCUMENT_LOCATION: 'Где документ',
   TRANSFERRED_BY: 'Кто передал',
+  CUSTOMER_SIGNING_RESPONSIBLE:
+    'Кто ответственный за подписание (заказчик)',
 
   // Финансовые поля
   PAID: 'Оплачен',
@@ -145,7 +148,7 @@ const SYSTEM_SPREADSHEET_ID_PROPERTY_ = 'SYSTEM_SPREADSHEET_ID';
  * ============================================================
  */
 const SYSTEM_CONFIG = {
-  VERSION: '0.6.0',
+  VERSION: '2.0.0',
 
   /**
    * Максимальное время ожидания блокировки.
@@ -163,6 +166,8 @@ const SYSTEM_CONFIG = {
     INITIAL_DOCUMENT_STATUS: 'Ожидает заполнения',
 
     AUTO_CREATE_DOCUMENTS: 'Автоматически',
+    DOCUMENT_REPEATABILITY_ONE: 'Один',
+    DOCUMENT_REPEATABILITY_MANY: 'Много',
 
     OPERATION_STATUS_SUCCESS: 'Успешно',
     OPERATION_STATUS_SUCCESS_WITH_WARNINGS:
@@ -199,6 +204,8 @@ const SYSTEM_CONFIG = {
     OPERATOR_CARD_SOURCE: 'Карточка операциониста',
     OBJECT_CREATION_SOURCE: 'Создание документов по объекту',
     OBJECT_DATA_SYNC_SOURCE: 'Синхронизация данных объектов',
+    DOCUMENT_V2_MIGRATION_SOURCE: 'Миграция архитектуры документов v2',
+    DOCUMENT_V2_MIGRATION_OPERATION_TYPE: 'Миграция данных документов',
     CHANGE_HISTORY_ARCHIVE_SOURCE: 'Архивация истории изменений',
     OBJECT_SHEET_CHANGE_SOURCE: 'Лист объектов',
     AUTOMATION_SOURCE: 'Автоматизация',
@@ -275,6 +282,7 @@ const SYSTEM_CONFIG = {
         H.OBJECT_NAME,
         H.DOCUMENT_TYPE,
         H.CONTRACT_NUMBER,
+        H.DOCUMENT_NUMBER,
         H.DOCUMENT_DATE,
         H.DOCUMENT_STATUS,
         H.ORIGINAL_EDO,
@@ -282,11 +290,13 @@ const SYSTEM_CONFIG = {
         H.DOCUMENT_HOLDER,
         H.DOCUMENT_LOCATION,
         H.TRANSFERRED_BY,
+        H.CUSTOMER_SIGNING_RESPONSIBLE,
         H.PAID,
         H.DOCUMENT_AMOUNT,
         H.GU_FLAG,
         H.GU_TERMS,
         H.OBJECT_STATUS,
+        H.RESPONSIBLE_FOREMAN,
         H.WORK_START_DATE,
         H.WORK_END_PLAN,
         H.WORK_END_FACT,
@@ -294,7 +304,6 @@ const SYSTEM_CONFIG = {
         H.UPDATED_AT,
         H.DOCUMENT_TYPE_ID,
         H.UPDATED_BY_EMAIL,
-        H.RESPONSIBLE_FOREMAN,
         H.RECORD_STATUS,
         H.FACT_ROW_NUMBER
       ]
@@ -310,6 +319,7 @@ const SYSTEM_CONFIG = {
         H.OBJECT_NAME,
         H.DOCUMENT_TYPE,
         H.CONTRACT_NUMBER,
+        H.DOCUMENT_NUMBER,
         H.DOCUMENT_DATE,
         H.DOCUMENT_STATUS,
         H.ORIGINAL_EDO,
@@ -317,11 +327,13 @@ const SYSTEM_CONFIG = {
         H.DOCUMENT_HOLDER,
         H.DOCUMENT_LOCATION,
         H.TRANSFERRED_BY,
+        H.CUSTOMER_SIGNING_RESPONSIBLE,
         H.PAID,
         H.DOCUMENT_AMOUNT,
         H.GU_FLAG,
         H.GU_TERMS,
         H.OBJECT_STATUS,
+        H.RESPONSIBLE_FOREMAN,
         H.WORK_START_DATE,
         H.WORK_END_PLAN,
         H.WORK_END_FACT,
@@ -329,7 +341,6 @@ const SYSTEM_CONFIG = {
         H.UPDATED_AT,
         H.DOCUMENT_TYPE_ID,
         H.UPDATED_BY_EMAIL,
-        H.RESPONSIBLE_FOREMAN,
         H.HOLDER_EMPLOYEE_ID,
         H.TRANSFERRED_BY_EMPLOYEE_ID,
         H.RESPONSIBLE_FOREMAN_ID,
@@ -440,7 +451,7 @@ const SYSTEM_CONFIG = {
    * editable: false — поле предназначено только для просмотра.
    *
    * Карта описывает контракт полей для будущего редактирования. Чтение
-   * карточки берёт первые 25 полей непосредственно из «Документы объектов».
+   * карточки берёт общий блок полей по карте заголовков непосредственно из «Документы объектов».
    */
   CARD_FIELD_MAP: [
     {
@@ -469,6 +480,11 @@ const SYSTEM_CONFIG = {
       cardHeader: H.CONTRACT_NUMBER,
       factHeader: H.CONTRACT_NUMBER,
       editable: false
+    },
+    {
+      cardHeader: H.DOCUMENT_NUMBER,
+      factHeader: H.DOCUMENT_NUMBER,
+      editable: true
     },
     {
       cardHeader: H.DOCUMENT_DATE,
@@ -506,6 +522,11 @@ const SYSTEM_CONFIG = {
       editable: true
     },
     {
+      cardHeader: H.CUSTOMER_SIGNING_RESPONSIBLE,
+      factHeader: H.CUSTOMER_SIGNING_RESPONSIBLE,
+      editable: true
+    },
+    {
       cardHeader: H.PAID,
       factHeader: H.PAID,
       editable: true
@@ -533,19 +554,24 @@ const SYSTEM_CONFIG = {
       editable: false
     },
     {
+      cardHeader: H.RESPONSIBLE_FOREMAN,
+      factHeader: H.RESPONSIBLE_FOREMAN,
+      editable: false
+    },
+    {
       cardHeader: H.WORK_START_DATE,
       factHeader: H.WORK_START_DATE,
-      editable: false
+      editable: true
     },
     {
       cardHeader: H.WORK_END_PLAN,
       factHeader: H.WORK_END_PLAN,
-      editable: false
+      editable: true
     },
     {
       cardHeader: H.WORK_END_FACT,
       factHeader: H.WORK_END_FACT,
-      editable: false
+      editable: true
     },
 
     // Системные поля документа
@@ -570,12 +596,6 @@ const SYSTEM_CONFIG = {
       editable: false
     },
 
-    // Ответственный уже синхронизирован в строку документа.
-    {
-      cardHeader: H.RESPONSIBLE_FOREMAN,
-      factHeader: H.RESPONSIBLE_FOREMAN,
-      editable: false
-    },
     { cardHeader: H.RECORD_STATUS, factHeader: H.RECORD_STATUS, editable: true },
     { cardHeader: H.FACT_ROW_NUMBER, factHeader: null, editable: false, technical: true }
   ]

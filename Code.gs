@@ -18,6 +18,10 @@ function getOperatorFilterData() {
   return operatorCardGetFilterData_();
 }
 
+function getOperatorCardState() {
+  return operatorCardGetLoadedState_();
+}
+
 function applyOperatorFilters(filters) {
   return operatorCardApply_(filters);
 }

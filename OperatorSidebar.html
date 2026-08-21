@@ -63,7 +63,7 @@ el('save').onclick=function(){
 function escapeHtml(value){const div=document.createElement('div');div.textContent=value;return div.innerHTML}
 window.onload=function(){
   busy(true,'Загрузка справочников...');
-  google.script.run.withSuccessHandler(result=>{data=result;fill('objects',data.objects||[]);fill('foremen',data.foremen||[]);fillValues('statuses',data.documentStatuses||[]);fill('types',data.documentTypes||[]);fill('holders',data.holders||[]);resetFilters();busy(false,'')}).withFailureHandler(error=>{busy(true,'');show('error',error.message||String(error),'error')}).getOperatorFilterData();
+  google.script.run.withSuccessHandler(result=>{data=result;fill('objects',data.objects||[]);fill('foremen',data.foremen||[]);fillValues('statuses',data.documentStatuses||[]);fill('types',data.documentTypes||[]);fill('holders',data.holders||[]);resetFilters();google.script.run.withSuccessHandler(cardState=>{lastAppliedFilters=cardState&&cardState.hasLoadedRows?{}:null;busy(false,'');if(lastAppliedFilters)show('state','Можно продолжить работу с уже загруженной карточкой.','success')}).withFailureHandler(error=>{busy(true,'');show('error',error.message||String(error),'error')}).getOperatorCardState()}).withFailureHandler(error=>{busy(true,'');show('error',error.message||String(error),'error')}).getOperatorFilterData();
 };
 </script>
 </body>

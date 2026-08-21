@@ -88,7 +88,7 @@
       const data = await server('webAppGetExistingDocuments', state.token, el('object').value, el('documentType').value);
       const list = el('documents'); list.replaceChildren();
       if (!data.documents.length) { const empty = document.createElement('div'); empty.className = 'document'; empty.textContent = 'Нет созданных документов.'; list.appendChild(empty); }
-      data.documents.forEach(item => { const card = document.createElement('div'); card.className = 'document'; [item.documentType, 'ID: ' + item.documentId, 'Статус: ' + item.documentStatus, 'Запись: ' + item.recordStatus].forEach(text => { const line = document.createElement('div'); line.textContent = text; card.appendChild(line); }); list.appendChild(card); });
+      data.documents.forEach(item => { const card = document.createElement('div'); card.className = 'document'; [item.displayName || item.documentType, 'ID: ' + item.documentId, 'Статус: ' + item.documentStatus, 'Запись: ' + item.recordStatus].forEach(text => { const line = document.createElement('div'); line.textContent = text; card.appendChild(line); }); list.appendChild(card); });
       el('nextDocument').textContent = data.nextDocumentName ? 'Следующий документ: ' + data.nextDocumentName : ''; el('existingBlock').classList.remove('hidden'); message('warning', data.warning, 'warning'); state.allowed = data.allowed;
     } catch (error) { if (!handleSessionError(error)) message('formMessage', error.message, 'error'); }
     finally { setBusy(false); }

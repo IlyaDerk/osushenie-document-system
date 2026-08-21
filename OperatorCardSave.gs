@@ -1,8 +1,10 @@
 /** Safe partial write-back workflow for «Карточка операциониста». */
 const OPERATOR_CARD_SAVE_WRITABLE_ = [
-  H.DOCUMENT_DATE, H.DOCUMENT_STATUS, H.ORIGINAL_EDO, H.COMMENT,
+  H.DOCUMENT_NUMBER, H.DOCUMENT_DATE, H.DOCUMENT_STATUS, H.ORIGINAL_EDO, H.COMMENT,
   H.DOCUMENT_HOLDER, H.DOCUMENT_LOCATION, H.TRANSFERRED_BY, H.PAID,
-  H.DOCUMENT_AMOUNT, H.GU_FLAG, H.GU_TERMS, H.RECORD_STATUS
+  H.CUSTOMER_SIGNING_RESPONSIBLE, H.DOCUMENT_AMOUNT, H.GU_FLAG, H.GU_TERMS,
+  H.WORK_START_DATE, H.WORK_END_PLAN, H.WORK_END_FACT,
+  H.RECORD_STATUS
 ];
 
 function operatorCardSaveEqual_(left, right) {
@@ -59,7 +61,8 @@ function operatorCardSaveProposeRow_(card, fact, dictionaries) {
 
   OPERATOR_CARD_SAVE_WRITABLE_.forEach(function (header) {
     let value = card.values[header];
-    if (header === H.DOCUMENT_DATE && !operatorCardSaveEmpty_(value) &&
+    if ([H.DOCUMENT_DATE, H.WORK_START_DATE, H.WORK_END_PLAN, H.WORK_END_FACT]
+      .indexOf(header) !== -1 && !operatorCardSaveEmpty_(value) &&
         (!(value instanceof Date) || isNaN(value.getTime()))) {
       throw new Error('Поле «' + header + '» должно быть пустым или корректной датой.');
     }
