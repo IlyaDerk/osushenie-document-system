@@ -3,9 +3,6 @@ const OBJECT_SYNC_FIELDS_ = Object.freeze([
   H.OBJECT_NAME,
   H.CONTRACT_NUMBER,
   H.OBJECT_STATUS,
-  H.WORK_START_DATE,
-  H.WORK_END_PLAN,
-  H.WORK_END_FACT,
   H.RESPONSIBLE_FOREMAN,
   H.RESPONSIBLE_FOREMAN_ID
 ]);
@@ -17,7 +14,12 @@ function assertObjectSyncFieldContract_() {
     H.DOCUMENT_TYPE_ID,
     H.DOCUMENT_NUMBER,
     H.DOCUMENT_DATE,
-    H.CUSTOMER_SIGNING_RESPONSIBLE
+    H.CUSTOMER_SIGNING_RESPONSIBLE,
+    // These dates are copied only by document creation. Afterwards they belong
+    // to the document and may be changed only by the dedicated card save flow.
+    H.WORK_START_DATE,
+    H.WORK_END_PLAN,
+    H.WORK_END_FACT
   ];
   const conflicts = OBJECT_SYNC_FIELDS_.filter(function (header) {
     return documentOwned.indexOf(header) !== -1;

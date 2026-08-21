@@ -1379,8 +1379,8 @@ test('118. project has exactly one global onEdit router', () => {
   assert.equal(count,1); const text=fs.readFileSync('ObjectSheetControls.gs','utf8');
   assert.match(text,/objectControlsHandleEdit_\(event\)/); assert.match(text,/operatorCardHandleReadOnlyEdit_\(event\)/);
 });
-test('119. card guard restores object name, contract and object date from physical fact row', () => {
-  for(const [header,bad] of [['Название объекта','ТЕСТ'],['Номер договора','BAD'],['Дата окончания (по плану)','BAD DATE']]) {
+test('119. card guard restores read-only object fields from physical fact row', () => {
+  for(const [header,bad] of [['Название объекта','ТЕСТ'],['Номер договора','BAD'],['Ответственный прораб','BAD NAME']]) {
     const column=operatorWorkflowCardHeaders.indexOf(header)+1;
     const fixture=readOnlyGuardFixture(column,1,card=>{card[column-1]=bad}); const expected=fixture.fact[column-1];
     fixture.ctx.operatorCardHandleReadOnlyEdit_({range:fixture.range});
@@ -1786,6 +1786,81 @@ test('158. mass creation applies One blank and Many max-plus-one numbering', () 
   assert.equal(prepared.documentRows[1][numberIndex],5);
   assert.equal(prepared.documentRows[0][typeIndex],'Договор');
   assert.equal(prepared.documentRows[1][typeIndex],'Акт');
+});
+
+test('159. operator card accepts and histories the three document-owned dates', () => {
+  const ctx=baseContext();
+  ctx.generateChangeId_=(operationId,index)=>operationId+'-'+index;
+  const dates=vm.runInContext('[new Date(2026,0,2),new Date(2026,1,3),new Date(2026,2,4)]',ctx);
+  const item=partialSaveFixture(ctx,{card:{
+    'Дата начала работ':dates[0],
+    'Дата окончания (по плану)':dates[1],
+    'Дата окончания (по факту)':dates[2]
+  }});
+  const plan=ctx.operatorCardBuildSavePlan_([item.card],[item.fact],partialDictionaries(),dates[0],'actor','OP-1');
+  assert.equal(plan.rowErrors.length,0);
+  assert.deepEqual(Array.from(plan.changes,change=>change.fieldName),[
+    'Дата начала работ','Дата окончания (по плану)','Дата окончания (по факту)'
+  ]);
+});
+
+test('160. operator card rejects non-Date values for each work date', () => {
+  for(const header of ['Дата начала работ','Дата окончания (по плану)','Дата окончания (по факту)']) {
+    const ctx=baseContext();
+    const item=partialSaveFixture(ctx,{card:{[header]:'2026-08-21'}});
+    const plan=ctx.operatorCardBuildSavePlan_([item.card],[item.fact],partialDictionaries(),new Date(),'actor','OP-1');
+    assert.equal(plan.rows.length,0,header);
+    assert.match(plan.rowErrors[0].message,/должно быть пустым или корректной датой/,header);
+  }
+});
+
+test('161. object synchronization cannot overwrite document work dates', () => {
+  const ctx=baseContext();
+  const fields=Array.from(vm.runInContext('OBJECT_SYNC_FIELDS_',ctx));
+  for(const header of ['Дата начала работ','Дата окончания (по плану)','Дата окончания (по факту)']) {
+    assert.ok(!fields.includes(header),header);
+  }
+  assert.equal(ctx.assertObjectSyncFieldContract_(),undefined);
+  const sync=fs.readFileSync('SyncObjectData.gs','utf8');
+  assert.match(sync,/documentOwned[\s\S]*H\.WORK_START_DATE[\s\S]*H\.WORK_END_PLAN[\s\S]*H\.WORK_END_FACT/);
+});
+
+test('162. loaded-card state validates the mapped document identity and physical row', () => {
+  const ctx=baseContext();
+  const contexts={
+    OPERATOR_CARD:{config:{dataStartRow:6},headerMap:{'ID документа':2,'Номер строки в таблице фактов':5},sheet:{
+      getLastRow:()=>6,getRange:()=>({getValues:()=>[['DOC-1','','',9]]})
+    }},
+    DOCUMENTS:{config:{dataStartRow:4},headerMap:{'ID документа':3},sheet:{
+      getLastRow:()=>10,getRange:(row,column)=>({getValue:()=>row===9&&column===3?'DOC-1':''})
+    }}
+  };
+  ctx.getSystemSheetContext_=key=>contexts[key];
+  assert.equal(ctx.operatorCardHasLoadedRow_(),true);
+});
+
+test('163. loaded-card state rejects a corrupted identity row', () => {
+  const ctx=baseContext();
+  const contexts={
+    OPERATOR_CARD:{config:{dataStartRow:6},headerMap:{'ID документа':1,'Номер строки в таблице фактов':2},sheet:{
+      getLastRow:()=>6,getRange:()=>({getValues:()=>[['DOC-1',9]]})
+    }},
+    DOCUMENTS:{config:{dataStartRow:4},headerMap:{'ID документа':1},sheet:{
+      getLastRow:()=>10,getRange:()=>({getValue:()=> 'OTHER'})
+    }}
+  };
+  ctx.getSystemSheetContext_=key=>contexts[key];
+  assert.equal(ctx.operatorCardHasLoadedRow_(),false);
+});
+
+test('164. reopening and resetting sidebar never reloads or clears a loaded card', () => {
+  const sidebar=fs.readFileSync('OperatorSidebar.html','utf8');
+  const onload=sidebar.slice(sidebar.indexOf('window.onload='));
+  assert.match(onload,/getOperatorSidebarData\(\)/);
+  assert.match(onload,/if\(data\.hasLoadedCard\)lastAppliedFilters=emptyFilters\(\)/);
+  assert.doesNotMatch(onload,/applyOperatorFilters/);
+  const reset=sidebar.match(/function resetFilters\(\)[^\n]+/)[0];
+  assert.doesNotMatch(reset,/lastAppliedFilters|null|save/);
 });
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);

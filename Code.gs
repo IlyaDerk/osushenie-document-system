@@ -18,6 +18,12 @@ function getOperatorFilterData() {
   return operatorCardGetFilterData_();
 }
 
+function getOperatorSidebarData() {
+  const result = operatorCardGetFilterData_();
+  result.hasLoadedCard = operatorCardHasLoadedRow_();
+  return result;
+}
+
 function applyOperatorFilters(filters) {
   return operatorCardApply_(filters);
 }
