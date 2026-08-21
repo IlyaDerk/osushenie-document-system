@@ -561,17 +561,17 @@ const SYSTEM_CONFIG = {
     {
       cardHeader: H.WORK_START_DATE,
       factHeader: H.WORK_START_DATE,
-      editable: false
+      editable: true
     },
     {
       cardHeader: H.WORK_END_PLAN,
       factHeader: H.WORK_END_PLAN,
-      editable: false
+      editable: true
     },
     {
       cardHeader: H.WORK_END_FACT,
       factHeader: H.WORK_END_FACT,
-      editable: false
+      editable: true
     },
 
     // Системные поля документа

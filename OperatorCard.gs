@@ -101,6 +101,36 @@ function operatorCardGetFilterData_() {
   };
 }
 
+/** Detects a card row whose document identity still points to its physical fact row. */
+function operatorCardHasLoadedRow_() {
+  const card = getSystemSheetContext_('OPERATOR_CARD');
+  const documents = getSystemSheetContext_('DOCUMENTS');
+  const cardIdColumn = card.headerMap[sysNormalizeHeader_(H.DOCUMENT_ID)];
+  const cardFactRowColumn = card.headerMap[sysNormalizeHeader_(H.FACT_ROW_NUMBER)];
+  const lastCardRow = card.sheet.getLastRow();
+  if (lastCardRow < card.config.dataStartRow) return false;
+
+  const firstColumn = Math.min(cardIdColumn, cardFactRowColumn);
+  const values = card.sheet.getRange(
+    card.config.dataStartRow, firstColumn,
+    lastCardRow - card.config.dataStartRow + 1,
+    Math.max(cardIdColumn, cardFactRowColumn) - firstColumn + 1
+  ).getValues();
+  const idOffset = cardIdColumn - firstColumn;
+  const rowOffset = cardFactRowColumn - firstColumn;
+  const documentIdColumn = documents.headerMap[sysNormalizeHeader_(H.DOCUMENT_ID)];
+  const lastDocumentRow = documents.sheet.getLastRow();
+
+  return values.some(function (row) {
+    const documentId = operatorCardNormalizeText_(row[idOffset]);
+    const factRow = Number(row[rowOffset]);
+    if (!documentId || !Number.isInteger(factRow) ||
+        factRow < documents.config.dataStartRow || factRow > lastDocumentRow) return false;
+    const factDocumentId = documents.sheet.getRange(factRow, documentIdColumn).getValue();
+    return operatorCardNormalizeText_(factDocumentId) === documentId;
+  });
+}
+
 function operatorCardNormalizeObjectFilter_(filter) {
   const value = filter || {};
   const id = operatorCardNormalizeText_(value.objectId);
