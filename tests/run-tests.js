@@ -3,7 +3,7 @@ const assert = require('assert');
 const fs = require('fs');
 const vm = require('vm');
 const cp = require('child_process');
-const files = ['SystemCore.gs', 'DocumentArchitectureCore.gs', 'CreateObjectDocuments.gs', 'SyncObjectData.gs', 'ArchiveChangeHistory.gs', 'OperatorCard.gs', 'OperatorCardSave.gs', 'ObjectSheetControls.gs', 'Code.gs', 'WebAppAuth.gs', 'DocumentWebAppServer.gs', 'DocumentArchitectureV2Migration.gs'];
+const files = ['SystemCore.gs', 'DocumentArchitectureCore.gs', 'CreateObjectDocuments.gs', 'SyncObjectData.gs', 'ArchiveChangeHistory.gs', 'OperatorCard.gs', 'OperatorCardSave.gs', 'ObjectSheetControls.gs', 'Code.gs', 'WebAppAuth.gs', 'DocumentWebAppServer.gs', 'DocumentArchitectureV2Migration.gs', 'ObjectCardReport.gs'];
 const source = files.map(f => fs.readFileSync(f, 'utf8')).join('\n');
 let passed = 0;
 function test(name, fn) {
@@ -1861,6 +1861,177 @@ test('164. reopening and resetting sidebar never reloads or clears a loaded card
   assert.doesNotMatch(onload,/applyOperatorFilters/);
   const reset=sidebar.match(/function resetFilters\(\)[^\n]+/)[0];
   assert.doesNotMatch(reset,/lastAppliedFilters|null|save/);
+});
+
+function objectCardFixture() {
+  const ctx = baseContext();
+  const row = (sourceRow, values) => ({ sourceRow, values });
+  const objects = [
+    row(3, {'ID объекта':'OBJ-10','Название объекта':'Одинаковое'}),
+    row(4, {'ID объекта':'OBJ-2','Название объекта':'Одинаковое'}),
+    row(5, {'ID объекта':'OBJ-3','Название объекта':'Пустой объект'})
+  ];
+  const doc = (sourceRow, id, objectId, type, number, status, record='Активная') => row(sourceRow, {
+    'ID документа':id, 'ID объекта':objectId, 'Тип документа':type,
+    'Номер договора':'Д-1', 'Номер документа':number,
+    'Дата документа':new Date('2026-08-24T00:00:00Z'),
+    'Статус документа':status,
+    'Кто ответственный за подписание (заказчик)':'Заказчик',
+    'Статус записи':record
+  });
+  const documents = [
+    doc(4,'DOC-1','OBJ-2','Акт','№10','В работе'),
+    doc(5,'DOC-2','OBJ-2','Акт','№2','Неизвестный'),
+    doc(6,'DOC-3','OBJ-10','Счёт','№1','  '),
+    doc(7,'DOC-4','','Акт','№1','В работе'),
+    doc(8,'DOC-5','NO-SUCH','Акт','№3','Неизвестный'),
+    doc(9,'DOC-6','OBJ-2','Акт','№1','В работе','Архивная')
+  ];
+  const dictionary = [
+    row(3, {'Статус документа':'В работе'}),
+    row(4, {'Статус документа':' в   работе '}),
+    row(5, {'Статус документа':'Готов'})
+  ];
+  const model = ctx.objectCardBuildModel_(objects, documents, dictionary,
+    new Date('2026-08-24T07:00:00Z'), 'Europe/Moscow');
+  return {ctx, objects, documents, dictionary, model,
+    output:ctx.objectCardBuildOutput_(model)};
+}
+
+test('165. object-card output sheet name is exact', () => {
+  assert.match(fs.readFileSync('ObjectCardReport.gs','utf8'), /SHEET_NAME: 'Карточка объектов'/);
+});
+test('166. object-card source reader resolves exact headerMap entries', () => {
+  assert.match(fs.readFileSync('ObjectCardReport.gs','utf8'), /context\.headerMap\[sysNormalizeHeader_\(header\)\]/);
+});
+test('167. object-card module never writes source contexts', () => {
+  const text=fs.readFileSync('ObjectCardReport.gs','utf8');
+  assert.doesNotMatch(text,/getSystemSheetContext_\([^)]*\)[\s\S]{0,80}setValues/);
+});
+test('168. Web App files remain outside the report implementation', () => {
+  assert.doesNotMatch(fs.readFileSync('ObjectCardReport.gs','utf8'), /webApp|DocumentWebApp/);
+});
+test('169. Operator Card files remain outside the report implementation', () => {
+  assert.doesNotMatch(fs.readFileSync('ObjectCardReport.gs','utf8'), /operatorCard|OperatorCard/);
+});
+test('170. every source object renders', () => {
+  const {model}=objectCardFixture(); assert.equal(model.objects.length,3);
+});
+test('171. documents are grouped by normalized object ID', () => {
+  const {model}=objectCardFixture(); assert.equal(model.objects[0].documents.length,2);
+});
+test('172. displayed object name comes from Objects', () => {
+  const {model}=objectCardFixture(); assert.equal(model.objects[0].name,'Одинаковое');
+});
+test('173. equal names with different IDs stay separate', () => {
+  const {model}=objectCardFixture(); assert.equal(model.objects.filter(x=>x.name==='Одинаковое').length,2);
+});
+test('174. an object rename cannot affect ID grouping', () => {
+  const f=objectCardFixture(); f.objects[1].values['Название объекта']='Новое имя';
+  const m=f.ctx.objectCardBuildModel_(f.objects,f.documents,f.dictionary,new Date(),'UTC');
+  assert.equal(m.objects[0].documents.length,2); assert.equal(m.objects[0].name,'Новое имя');
+});
+test('175. zero-document object has all zero counts', () => {
+  const zero=objectCardFixture().model.objects.find(x=>x.id==='OBJ-3');
+  assert.equal(zero.stats.total,0); assert.ok(zero.stats.counts.every(x=>x===0));
+});
+test('176. zero-document object has no detail group', () => {
+  const f=objectCardFixture(); assert.equal(f.output.groups.length,3);
+});
+test('177. only active records enter the snapshot', () => {
+  assert.equal(objectCardFixture().model.globalStats.total,5);
+});
+test('178. archived records are excluded', () => {
+  const {model}=objectCardFixture(); assert.ok(!model.objects[0].documents.some(x=>x.values['ID документа']==='DOC-6'));
+});
+test('179. detail contract contains exactly six values', () => {
+  const f=objectCardFixture(); assert.equal(f.ctx.objectCardDetailRow_(f.model.objects[0].documents[0],6).length,6);
+});
+test('180. detail contract excludes Comment', () => {
+  assert.doesNotMatch(fs.readFileSync('ObjectCardReport.gs','utf8').match(/DETAIL_HEADERS:[\s\S]*?\]\)/)[0], /COMMENT/);
+});
+test('181. details sort by type then natural document number', () => {
+  const docs=objectCardFixture().model.objects[0].documents; assert.deepEqual(docs.map(x=>x.values['Номер документа']),['№2','№10']);
+});
+test('182. natural order places №2 before №10', () => {
+  assert.ok(objectCardFixture().ctx.objectCardNaturalCompare_('№2','№10')<0);
+});
+test('183. dictionary statuses create columns', () => {
+  assert.deepEqual(objectCardFixture().model.statuses.slice(0,2),['В работе','Готов']);
+});
+test('184. dictionary status order is preserved', () => {
+  const s=objectCardFixture().model.statuses; assert.ok(s.indexOf('В работе')<s.indexOf('Готов'));
+});
+test('185. normalized dictionary duplicates do not duplicate columns', () => {
+  assert.equal(objectCardFixture().model.statuses.filter(x=>/работе/i.test(x)).length,1);
+});
+test('186. a newly supplied dictionary status appears automatically', () => {
+  const f=objectCardFixture(); f.dictionary.push({sourceRow:6,values:{'Статус документа':'Новый'}});
+  const m=f.ctx.objectCardBuildModel_(f.objects,f.documents,f.dictionary,new Date(),'UTC'); assert.ok(m.statuses.includes('Новый'));
+});
+test('187. unknown actual status gets its own column', () => {
+  assert.ok(objectCardFixture().model.statuses.includes('Неизвестный'));
+});
+test('188. blank actual status maps to Без статуса', () => {
+  const f=objectCardFixture(); const i=f.model.statuses.indexOf('Без статуса'); assert.equal(f.model.globalStats.counts[i],1);
+});
+test('189. unknown actual status remains counted', () => {
+  const f=objectCardFixture(); const i=f.model.statuses.indexOf('Неизвестный'); assert.equal(f.model.globalStats.counts[i],2);
+});
+test('190. global total equals global status sum', () => {
+  const s=objectCardFixture().model.globalStats; assert.equal(s.total,s.counts.reduce((a,b)=>a+b,0));
+});
+test('191. every real-object total equals its status sum', () => {
+  assert.ok(objectCardFixture().model.objects.every(x=>x.stats.total===x.stats.counts.reduce((a,b)=>a+b,0)));
+});
+test('192. orphan total equals orphan status sum', () => {
+  const s=objectCardFixture().model.orphanStats; assert.equal(s.total,s.counts.reduce((a,b)=>a+b,0));
+});
+test('193. global total equals objects plus orphan total', () => {
+  const m=objectCardFixture().model; assert.equal(m.globalStats.total,m.objects.reduce((n,x)=>n+x.stats.total,0)+m.orphanStats.total);
+});
+test('194. every active source document is assigned exactly once', () => {
+  const m=objectCardFixture().model; assert.equal(m.globalStats.total,5);
+});
+test('195. blank object ID enters orphan bucket', () => {
+  assert.ok(objectCardFixture().model.orphans.some(x=>x.values['ID документа']==='DOC-4'));
+});
+test('196. unknown object ID enters orphan bucket', () => {
+  assert.ok(objectCardFixture().model.orphans.some(x=>x.values['ID документа']==='DOC-5'));
+});
+test('197. orphan documents are included globally', () => {
+  const m=objectCardFixture().model; assert.equal(m.orphanStats.total,2); assert.equal(m.globalStats.total,5);
+});
+test('198. orphan summary is absent when no orphan exists', () => {
+  const f=objectCardFixture(); const known=new Set(['OBJ-2','OBJ-10','OBJ-3']);
+  const docs=f.documents.filter(x=>known.has(x.values['ID объекта']));
+  const m=f.ctx.objectCardBuildModel_(f.objects,docs,f.dictionary,new Date(),'UTC');
+  assert.ok(!f.ctx.objectCardBuildOutput_(m).rows.some(r=>r[0]==='⚠ Документы без найденного объекта'));
+});
+test('199. orphan details receive one collapsed-group plan', () => {
+  const f=objectCardFixture(); const last=f.output.groups[f.output.groups.length-1]; assert.equal(last.rowCount,3);
+});
+test('200. public rebuild function exists', () => {
+  assert.equal(typeof objectCardFixture().ctx.rebuildObjectCard,'function');
+});
+test('201. report creates no automatic trigger', () => {
+  assert.doesNotMatch(fs.readFileSync('ObjectCardReport.gs','utf8'), /newTrigger|ScriptApp/);
+});
+test('202. old row groups are removed before sheet clear', () => {
+  const text=fs.readFileSync('ObjectCardReport.gs','utf8'); assert.ok(text.indexOf('objectCardRemoveGroups_(sheet)')<text.indexOf('sheet.clear()'));
+});
+test('203. detail group starts after and excludes summary row', () => {
+  assert.ok(objectCardFixture().output.groups.every(g=>g.startRow===g.summaryRow+1));
+});
+test('204. every published row group is collapsed', () => {
+  assert.match(fs.readFileSync('ObjectCardReport.gs','utf8'), /rowGroup\.collapse\(\)/);
+});
+test('205. validation and model building precede destructive publishing', () => {
+  const text=fs.readFileSync('ObjectCardReport.gs','utf8'); assert.ok(text.indexOf('objectCardBuildModel_(')<text.indexOf('objectCardPublish_('));
+});
+test('206. invalid object contract fails before any output operation', () => {
+  const f=objectCardFixture(); f.objects[0].values['ID объекта']='';
+  assert.throws(()=>f.ctx.objectCardBuildModel_(f.objects,f.documents,f.dictionary,new Date(),'UTC'),/не указан/);
 });
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);
