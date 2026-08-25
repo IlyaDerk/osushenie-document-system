@@ -26,6 +26,25 @@ function operatorCardSaveLabelMap_(items) {
   return map;
 }
 
+function operatorCardSaveUniqueDisplayMap_(items, labelBuilder) {
+  const map = {};
+  items.forEach(function (item) {
+    const label = labelBuilder(item);
+    if (!label) return;
+    if (!map[label]) map[label] = [];
+    map[label].push(item);
+  });
+  return map;
+}
+
+function operatorCardSaveResolveUnique_(map, value, header) {
+  const matches = map[value] || [];
+  if (matches.length > 1) {
+    throw new Error('Поле «' + header + '»: значение «' + value + '» неоднозначно. Исправьте дубли в справочнике.');
+  }
+  return matches.length === 1 ? matches[0] : null;
+}
+
 function operatorCardSaveAssertDictionary_(value, allowed, header) {
   if (operatorCardSaveEmpty_(value)) return;
   if (!allowed.some(function (item) {
@@ -52,7 +71,15 @@ function operatorCardSaveError_(card, factRow, message) {
 
 function operatorCardSaveProposeRow_(card, fact, dictionaries) {
   const holderMap = operatorCardSaveLabelMap_(dictionaries.holders);
-  const employeeMap = operatorCardSaveLabelMap_(dictionaries.employees);
+  const employeeMap = operatorCardSaveUniqueDisplayMap_(dictionaries.employees, function (employee) {
+    return operatorCardDisplayLabel_(employee.name, employee.id);
+  });
+  const objectClients = operatorCardClientsForObject_(
+    dictionaries.clients, card.values[H.OBJECT_NAME]
+  );
+  const clientMap = operatorCardSaveUniqueDisplayMap_(objectClients, function (client) {
+    return client.name;
+  });
   const dictionaryHeaders = [
     H.DOCUMENT_STATUS, H.ORIGINAL_EDO, H.DOCUMENT_LOCATION,
     H.PAID, H.GU_FLAG, H.RECORD_STATUS
@@ -90,13 +117,29 @@ function operatorCardSaveProposeRow_(card, fact, dictionaries) {
       if (operatorCardSaveEmpty_(value)) {
         value = '';
         proposed[H.TRANSFERRED_BY_EMPLOYEE_ID] = '';
-      } else if (employeeMap[value]) {
-        proposed[H.TRANSFERRED_BY_EMPLOYEE_ID] = employeeMap[value].id;
-        value = employeeMap[value].name;
+      } else if (operatorCardSaveResolveUnique_(employeeMap, value, header)) {
+        const employee = operatorCardSaveResolveUnique_(employeeMap, value, header);
+        proposed[H.TRANSFERRED_BY_EMPLOYEE_ID] = employee.id;
+        value = employee.name;
+      } else if (operatorCardSaveResolveUnique_(clientMap, value, header)) {
+        const client = operatorCardSaveResolveUnique_(clientMap, value, header);
+        proposed[H.TRANSFERRED_BY_EMPLOYEE_ID] = client.id;
+        value = client.name;
       } else if (!fact.values[H.TRANSFERRED_BY_EMPLOYEE_ID] && value === fact.values[H.TRANSFERRED_BY]) {
         proposed[H.TRANSFERRED_BY_EMPLOYEE_ID] = '';
       } else {
-        throw new Error('«Кто передал» должен быть выбран из актуального справочника сотрудников.');
+        throw new Error('«Кто передал» должен быть выбран из актуальных справочников.');
+      }
+    }
+    if (header === H.CUSTOMER_SIGNING_RESPONSIBLE) {
+      if (operatorCardSaveEmpty_(value)) {
+        value = '';
+      } else if (value === fact.values[H.CUSTOMER_SIGNING_RESPONSIBLE]) {
+        value = fact.values[H.CUSTOMER_SIGNING_RESPONSIBLE];
+      } else {
+        const client = operatorCardSaveResolveUnique_(clientMap, value, header);
+        if (!client) throw new Error('Поле «' + header + '»: выберите контакт клиента текущего объекта.');
+        value = client.name;
       }
     }
     proposed[header] = value;
@@ -142,7 +185,10 @@ function operatorCardBuildSavePlan_(cardItems, factItems, dictionaries, now, ema
         if (header === H.DOCUMENT_HOLDER) {
           factValue = operatorCardDisplayLabel_(factValue, fact.values[H.HOLDER_EMPLOYEE_ID]);
         } else if (header === H.TRANSFERRED_BY) {
-          factValue = operatorCardDisplayLabel_(factValue, fact.values[H.TRANSFERRED_BY_EMPLOYEE_ID]);
+          const transferredId = operatorCardNormalizeText_(fact.values[H.TRANSFERRED_BY_EMPLOYEE_ID]);
+          factValue = transferredId.indexOf(SYSTEM_CONFIG.ID_PREFIXES.CLIENT) === 0
+            ? operatorCardNormalizeText_(factValue)
+            : operatorCardDisplayLabel_(factValue, transferredId);
         }
         return !operatorCardSaveEqual_(card.values[header], factValue);
       });
@@ -161,7 +207,8 @@ function operatorCardBuildSavePlan_(cardItems, factItems, dictionaries, now, ema
       const proposed = operatorCardSaveProposeRow_(card, fact, dictionaries);
       const changes = [];
       Object.keys(proposed).forEach(function (header) {
-        if (!operatorCardSaveEqual_(proposed[header], fact.values[header])) {
+        if (!(operatorCardSaveEmpty_(proposed[header]) && operatorCardSaveEmpty_(fact.values[header])) &&
+            !operatorCardSaveEqual_(proposed[header], fact.values[header])) {
           changes.push({ header: header, oldValue: fact.values[header], newValue: proposed[header] });
         }
       });

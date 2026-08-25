@@ -94,13 +94,15 @@ function webAppCreateDocument(sessionToken, payload) {
         documentsContext.config.dataStartRow
       );
       const now = new Date();
-      const documentNumber = type.repeatability === SYSTEM_CONFIG.VALUES.DOCUMENT_REPEATABILITY_MANY
-        ? webAppNextDocumentNumber_(existing, type.name) : '';
-      if (documentNumber !== '' && webAppDocumentNumberOccupied_(
-        existing, type.name, documentNumber
+      const nextNumber = type.repeatability === SYSTEM_CONFIG.VALUES.DOCUMENT_REPEATABILITY_MANY
+        ? webAppNextDocumentNumber_(existing, type.name) : null;
+      if (nextNumber !== null && webAppDocumentNumberOccupied_(
+        existing, type.name, nextNumber
       )) {
         throw new Error('Рассчитанный номер документа уже занят. Обновите данные.');
       }
+      const documentNumber = nextNumber === null
+        ? type.name : webAppDisplayDocumentName_(type.name, nextNumber);
       const prepared = webAppPrepareDocument_(
         object, type, type.name, documentNumber, clean.documentStatus,
         fact, documentsContext,
@@ -120,7 +122,7 @@ function webAppCreateDocument(sessionToken, payload) {
       return {
         ok: true, objectName: object.name,
         documentType: type.name, documentNumber: documentNumber,
-        documentName: webAppDisplayDocumentName_(type.name, documentNumber),
+        documentName: documentNumber,
         documentStatus: clean.documentStatus, documentId: prepared.documentId
       };
     } catch (error) {

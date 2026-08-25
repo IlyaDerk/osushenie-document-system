@@ -1042,10 +1042,11 @@ test('80. holder dictionary is employee then client and labels contain IDs', () 
   assert.match(text,/employees\.map[\s\S]*\.concat\(clients\.map/);
   assert.equal(baseContext().operatorCardDisplayLabel_('ООО Ромашка','CL-0001'),'ООО Ромашка [CL-0001]');
 });
-test('81. save module resolves holder from combined map and transfer only from employees', () => {
+test('81. save module preserves holder resolution and makes transfer polymorphic', () => {
   const text=fs.readFileSync('OperatorCardSave.gs','utf8');
   assert.match(text,/holderMap\[value\][\s\S]*HOLDER_EMPLOYEE_ID/);
-  assert.match(text,/employeeMap\[value\][\s\S]*TRANSFERRED_BY_EMPLOYEE_ID/);
+  assert.match(text,/ResolveUnique_\(employeeMap[\s\S]*TRANSFERRED_BY_EMPLOYEE_ID/);
+  assert.match(text,/ResolveUnique_\(clientMap[\s\S]*TRANSFERRED_BY_EMPLOYEE_ID/);
   assert.match(text,/value = ''[\s\S]*HOLDER_EMPLOYEE_ID\] = ''/);
 });
 test('82. save validates optimistic version and all row identity keys before writes', () => {
@@ -1100,6 +1101,7 @@ function partialDictionaries() {
   return {
     holders:[{id:'ST-1',name:'Иванов',type:'employee'},{id:'CL-1',name:'ООО Ромашка',type:'client'}],
     employees:[{id:'ST-1',name:'Иванов'}],
+    clients:[],
     card:{
       'Статус документа':['Новый','Готов'], 'Оригинал / ЭДО':['Оригинал','ЭДО'],
       'Где документ':['Офис','Архив'], 'Оплачен':['Нет','Да'], 'ГУ (Да/Нет)':['Нет','Да'],
@@ -1639,18 +1641,18 @@ test('149. Web App numbering supports legacy suffix with explicit-number priorit
   ],'КС-2'),1);
 });
 
-test('150. repeatability One stores an empty number and Many stores it separately', () => {
+test('150. Web repeatability stores canonical concrete names separately from base type', () => {
   const ctx=baseContext();
   const headers=Array.from(vm.runInContext('SYSTEM_CONFIG.SHEETS.DOCUMENTS.requiredHeaders',ctx));
   const context={headers,headerMap:Object.fromEntries(headers.map((header,index)=>[header,index+1]))};
   const object={id:'7',name:'Объект',contractNumber:'',objectStatus:'Действующий',workStartDate:'',workEndPlan:'',workEndFact:'',responsibleForeman:'',responsibleForemanId:''};
   const facts={documentIds:{}}; const now=new Date(); ctx.generateChangeId_=()=> 'CHG-1';
-  const one=ctx.webAppPrepareDocument_(object,{id:'ONE'},'Договор','', 'Новый',facts,context,4,now,'actor','OP-1');
-  const many=ctx.webAppPrepareDocument_(object,{id:'MANY'},'КС-2',3, 'Новый',facts,context,5,now,'actor','OP-2');
+  const one=ctx.webAppPrepareDocument_(object,{id:'ONE'},'Договор','Договор', 'Новый',facts,context,4,now,'actor','OP-1');
+  const many=ctx.webAppPrepareDocument_(object,{id:'MANY'},'КС-2','КС-2 №3', 'Новый',facts,context,5,now,'actor','OP-2');
   const at=(row,header)=>row[headers.indexOf(header)];
-  assert.equal(at(one.row,'Номер документа'),'');
+  assert.equal(at(one.row,'Номер документа'),'Договор');
   assert.equal(at(many.row,'Тип документа'),'КС-2');
-  assert.equal(at(many.row,'Номер документа'),3);
+  assert.equal(at(many.row,'Номер документа'),'КС-2 №3');
   assert.doesNotMatch(at(many.row,'Тип документа'),/№/);
 });
 
@@ -1680,11 +1682,10 @@ test('152. preview and locked creation share the numbering algorithm', () => {
 test('153. creation snapshot keeps canonical type and separate document number', () => {
   const ctx=baseContext();
   const snapshot=ctx.buildCreationInitialSnapshot_({
-    'Тип документа':'КС-2','Номер документа':6,'ID типа документа':'TYPE'
+    'Тип документа':'КС-2','Номер документа':'КС-2 №6','ID типа документа':'TYPE'
   });
   assert.match(snapshot,/Тип документа: КС-2/);
-  assert.match(snapshot,/Номер документа: 6/);
-  assert.doesNotMatch(snapshot,/КС-2 №6/);
+  assert.match(snapshot,/Номер документа: КС-2 №6/);
 });
 
 test('154. standalone Web App loads and numbers without migration module', () => {
@@ -2083,6 +2084,136 @@ test('210. actual Без статуса and blank facts share one final status c
   assert.deepEqual(indexes,[m.statuses.length-1]);
   assert.equal(m.globalStats.counts[indexes[0]],2);
   assert.equal(m.globalStats.total,m.globalStats.counts.reduce((a,b)=>a+b,0));
+});
+
+test('211. client sheet contract has the exact nine contact headers', () => {
+  const ctx=baseContext();
+  const config=vm.runInContext('SYSTEM_CONFIG.SHEETS.CLIENTS',ctx);
+  assert.equal(config.headerRow,4); assert.equal(config.dataStartRow,5);
+  assert.deepEqual(Array.from(config.requiredHeaders),[
+    'ID клиента','Наименование клиента','Название объекта','ФИО сотрудника','Должность',
+    'Электронная почта','Телефон','Комментарий','Статус клиента'
+  ]);
+});
+
+test('212. client display trims whitespace and never guesses a missing part', () => {
+  const ctx=baseContext();
+  assert.equal(ctx.operatorCardClientDisplay_(' Иванов\u00a0 Иван ',' ООО   Ромашка '),'Иванов Иван — ООО Ромашка');
+  assert.equal(ctx.operatorCardClientDisplay_('Иванов',''),'');
+  assert.equal(ctx.operatorCardClientDisplay_('','ООО'),'');
+});
+
+test('213. client reader is header-driven and one row remains one contact', () => {
+  const ctx=baseContext();
+  const contexts={
+    OBJECTS:operatorDictionaryContext(['ID объекта','Название объекта'],3,[]),
+    EMPLOYEES:operatorDictionaryContext(['ID Сотрудника','ФИО сотрудника','Должность'],5,[]),
+    CLIENTS:operatorDictionaryContext([
+      'Статус клиента','ФИО сотрудника','Название объекта','ID клиента','Наименование клиента'
+    ],5,[['Активный','Иванов','Объект А','CL-1','ООО А'],['Активный','Петров','Объект А','CL-2','ООО А']]),
+    DOCUMENT_TYPES:operatorDictionaryContext(['ID типа документа','Тип документа'],5,[]),
+    CARD_DICTIONARY:operatorDictionaryContext(['Статус документа'],3,[])
+  };
+  ctx.getSystemSheetContext_=key=>contexts[key];
+  const clients=ctx.operatorCardGetFilterData_().clients;
+  assert.deepEqual(Array.from(clients,x=>[x.id,x.name]),[['CL-1','Иванов — ООО А'],['CL-2','Петров — ООО А']]);
+});
+
+test('214. duplicate client contact IDs fail safely', () => {
+  const ctx=baseContext();
+  const empty=operatorDictionaryContext(['ID объекта','Название объекта'],3,[]);
+  const contexts={OBJECTS:empty,EMPLOYEES:operatorDictionaryContext(['ID Сотрудника','ФИО сотрудника','Должность'],5,[]),
+    CLIENTS:operatorDictionaryContext(['ID клиента','Наименование клиента','Название объекта','ФИО сотрудника','Статус клиента'],5,[
+      ['CL-1','ООО А','А','Иванов','Активный'],['CL-1','ООО Б','Б','Петров','Активный']]),
+    DOCUMENT_TYPES:operatorDictionaryContext(['ID типа документа','Тип документа'],5,[]),CARD_DICTIONARY:operatorDictionaryContext(['Статус документа'],3,[])};
+  ctx.getSystemSheetContext_=key=>contexts[key];
+  assert.throws(()=>ctx.operatorCardGetFilterData_(),/повторяется ID клиента/);
+});
+
+test('215. active clients use strict normalized object equality without fuzzy matching', () => {
+  const ctx=baseContext(); const clients=[
+    {id:'1',objectName:' Объект\u00a0 А ',status:' Активный '},
+    {id:'2',objectName:'Объект А корпус 2',status:'Активный'},
+    {id:'3',objectName:'Объект А',status:'Неактивный'},
+    {id:'4',objectName:'Объект Б',status:'Активный'}
+  ];
+  assert.deepEqual(Array.from(ctx.operatorCardClientsForObject_(clients,'Объект А'),x=>x.id),['1']);
+  assert.deepEqual(Array.from(ctx.operatorCardClientsForObject_(clients,'Объект'),x=>x.id),[]);
+});
+
+test('216. signer and transferred validations are built per document row in batches', () => {
+  const ctx=baseContext(); const calls=[];
+  ctx.SpreadsheetApp.newDataValidation=()=>{const state={};return {requireValueInList(v){state.values=Array.from(v);return this},setAllowInvalid(){return this},build(){return state}}};
+  const headerMap={'ID документа':1,'Название объекта':3,'Кто передал':13,'Кто ответственный за подписание (заказчик)':14};
+  const sheet={getMaxRows:()=>8,getRange(row,column,count,width){return {setDataValidations(rules){calls.push({row,column,count,width,rules})}}}};
+  const rows=[['D1','','Объект А'],['D2','','Объект Б']];
+  const data={employees:[{id:'ST-1',name:'Сотрудник'}],clients:[
+    {id:'CL-1',name:'Иванов — ООО А',objectName:'Объект А',status:'Активный'},
+    {id:'CL-2',name:'Петров — ООО Б',objectName:'Объект Б',status:'Активный'},
+    {id:'CL-3',name:'Неактивный — ООО А',objectName:'Объект А',status:'Неактивный'}]};
+  ctx.operatorCardApplyRowValidations_({sheet,headerMap,config:{dataStartRow:6}},rows,data);
+  assert.equal(calls.length,1); assert.equal(calls[0].count,3); assert.equal(calls[0].width,2);
+  assert.deepEqual(calls[0].rules[0][0].values,['Сотрудник [ST-1]','Иванов — ООО А']);
+  assert.deepEqual(calls[0].rules[1][0].values,['Сотрудник [ST-1]','Петров — ООО Б']);
+  assert.deepEqual(calls[0].rules[0][1].values,['Иванов — ООО А']);
+  assert.deepEqual(calls[0].rules[2],[null,null]);
+});
+
+test('217. transferred-by stores ST and CL IDs in the existing polymorphic column', () => {
+  const ctx=baseContext(); const dictionaries=partialDictionaries();
+  dictionaries.clients=[{id:'CL-1',name:'Иванов — ООО А',objectName:'Объект Альфа',status:'Активный'}];
+  let fixture=partialSaveFixture(ctx,{card:{'Кто передал':'Иванов [ST-1]'}});
+  let proposed=ctx.operatorCardSaveProposeRow_(fixture.card,fixture.fact,dictionaries);
+  assert.equal(proposed['Кто передал'],'Иванов'); assert.equal(proposed['ID сотрудника — кто передал'],'ST-1');
+  fixture=partialSaveFixture(ctx,{card:{'Кто передал':'Иванов — ООО А'}});
+  proposed=ctx.operatorCardSaveProposeRow_(fixture.card,fixture.fact,dictionaries);
+  assert.equal(proposed['Кто передал'],'Иванов — ООО А'); assert.equal(proposed['ID сотрудника — кто передал'],'CL-1');
+});
+
+test('218. transferred reload displays employee labels and client contact displays correctly', () => {
+  const ctx=baseContext();
+  const base={documentId:0,objectId:1,documentTypeId:2,documentStatus:3,holderId:4,foremanId:5,createdAt:6,recordStatus:7,transferredById:8,documentHolder:9,transferredBy:10};
+  const rows=[['D1','O','T','Новый','','',new Date(),'Активная','ST-1','','Иванов'],['D2','O','T','Новый','','',new Date(),'Активная','CL-1','','Петров — ООО']];
+  const result=ctx.operatorCardPrepareRows_(rows,base,ctx.operatorCardNormalizeFilters_({}),{active:false},4,0,{});
+  assert.equal(result.cardRows[0][10],'Иванов [ST-1]'); assert.equal(result.cardRows[1][10],'Петров — ООО');
+});
+
+test('219. transferred resolution rejects ambiguous employee or client displays', () => {
+  const ctx=baseContext(); const fixture=partialSaveFixture(ctx,{card:{'Кто передал':'Иванов — ООО'}});
+  const dictionaries=partialDictionaries(); dictionaries.clients=[
+    {id:'CL-1',name:'Иванов — ООО',objectName:'Объект Альфа',status:'Активный'},
+    {id:'CL-2',name:'Иванов — ООО',objectName:'Объект Альфа',status:'Активный'}];
+  assert.throws(()=>ctx.operatorCardSaveProposeRow_(fixture.card,fixture.fact,dictionaries),/неоднозначно/);
+});
+
+test('220. signer selection saves, clears, and enters ordinary change history planning', () => {
+  const ctx=baseContext(); const dictionaries=partialDictionaries();
+  dictionaries.clients=[{id:'CL-1',name:'Иванов — ООО',objectName:'Объект Альфа',status:'Активный'}];
+  let fixture=partialSaveFixture(ctx,{card:{'Кто ответственный за подписание (заказчик)':'Иванов — ООО'}});
+  let plan=ctx.operatorCardBuildSavePlan_([fixture.card],[fixture.fact],dictionaries,new Date(),'a','OP-20260825-0001');
+  assert.deepEqual(Array.from(plan.changes,x=>x.fieldName),['Кто ответственный за подписание (заказчик)']);
+  fixture=partialSaveFixture(ctx,{fact:{'Кто ответственный за подписание (заказчик)':'Иванов — ООО'},card:{'Кто ответственный за подписание (заказчик)':''}});
+  plan=ctx.operatorCardBuildSavePlan_([fixture.card],[fixture.fact],dictionaries,new Date(),'a','OP-20260825-0001');
+  assert.equal(plan.changes[0].newValue,'');
+});
+
+test('221. Web document types are dynamic and accept rename/removal without code changes', () => {
+  const ctx=baseContext(); const headers=['ID типа документа','Тип документа','Повторяемость']; let rows=[['T1','Старое имя','Один'],['T2','Удаляемый','Много']];
+  ctx.getSystemSheetContext_=()=>({headers,headerMap:{'ID типа документа':1,'Тип документа':2,'Повторяемость':3},config:{dataStartRow:5},sheet:{getLastRow:()=>4+rows.length,getRange:()=>({getValues:()=>rows})}});
+  assert.deepEqual(Array.from(ctx.webAppReadDocumentTypes_(),x=>x.name),['Старое имя','Удаляемый']);
+  rows=[['T1','Новое имя','Один']];
+  assert.deepEqual(Array.from(ctx.webAppReadDocumentTypes_(),x=>x.name),['Новое имя']);
+  const web=fs.readFileSync('DocumentWebAppServer.gs','utf8')+fs.readFileSync('DocumentWebApp.html','utf8');
+  assert.doesNotMatch(web,/КС-2|КС-3/);
+});
+
+test('222. Web v2 creation keeps base type and concrete number contracts', () => {
+  const text=fs.readFileSync('DocumentWebAppServer.gs','utf8');
+  assert.match(text,/nextNumber === null\s*\? type\.name : webAppDisplayDocumentName_/);
+  assert.match(text,/values\[H\.DOCUMENT_TYPE\] = canonicalDocumentType/);
+  assert.match(text,/values\[H\.DOCUMENT_NUMBER\] = documentNumber/);
+  assert.doesNotMatch(text,/values\[H\.DOCUMENT_TYPE\][^;]*№/);
+  assert.match(text,/String\(row\[indexes\[H\.OBJECT_ID\]\]\)\.trim\(\) !== objectId[\s\S]*H\.DOCUMENT_TYPE_ID/);
 });
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);
