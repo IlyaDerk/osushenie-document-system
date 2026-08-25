@@ -23,3 +23,9 @@
 ## Карточка операциониста: чтение
 
 Рабочая read-only загрузка карточки реализована в `OperatorCard.gs`, публичные точки входа находятся в `Code.gs`, интерфейс — в `OperatorSidebar.html`. Подробный контракт, автоматические проверки и шесть сценариев ручной приёмки описаны в [05_OPERATOR_CARD_READ_SPEC.md](05_OPERATOR_CARD_READ_SPEC.md).
+
+## Карточка объектов
+
+Generated read-only отчёт реализован изолированно в `ObjectCardReport.gs`.
+Архитектура snapshot, правила полного учёта и инструкция ручного hourly trigger
+описаны в [09_OBJECT_CARD_REPORT_SPEC.md](09_OBJECT_CARD_REPORT_SPEC.md).
