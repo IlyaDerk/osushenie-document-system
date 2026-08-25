@@ -2051,9 +2051,16 @@ test('208. old generated row groups are removed with one bulk depth shift', () =
   const ctx=baseContext(); const calls=[];
   const range={shiftRowGroupDepth:depth=>calls.push(depth)};
   const sheet={getMaxRows:()=>1000,getRange:(row,column,count,width)=>{
-    assert.deepEqual([row,column,count,width],[1,1,1000,1]); return range;
+    assert.deepEqual([row,column,count,width],[2,1,999,1]); return range;
   }};
   ctx.objectCardRemoveGroups_(sheet);
+  assert.deepEqual(calls,[-8]);
+  let oneRowRangeCalled=false;
+  ctx.objectCardRemoveGroups_({
+    getMaxRows:()=>1,
+    getRange:()=>{ oneRowRangeCalled=true; return range; }
+  });
+  assert.equal(oneRowRangeCalled,false);
   assert.deepEqual(calls,[-8]);
   const text=fs.readFileSync('ObjectCardReport.gs','utf8');
   assert.doesNotMatch(text,/getRowGroupDepth|getRowGroup\(row/);

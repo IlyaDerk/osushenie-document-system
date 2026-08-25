@@ -283,9 +283,11 @@ function objectCardBuildOutput_(model) {
 
 function objectCardRemoveGroups_(sheet) {
   // Google Sheets supports at most eight outline levels. Applying the maximum
-  // negative shift to the complete generated sheet removes every old level in
-  // one API operation, including groups below the previous data range.
-  sheet.getRange(1, 1, sheet.getMaxRows(), 1).shiftRowGroupDepth(-8);
+  // negative shift below the first row removes every old level in one API
+  // operation and remains safe when row-group controls are positioned BEFORE.
+  const maxRows = sheet.getMaxRows();
+  if (maxRows <= 1) return;
+  sheet.getRange(2, 1, maxRows - 1, 1).shiftRowGroupDepth(-8);
 }
 
 /** The only destructive phase. It owns only the generated output sheet. */
