@@ -349,7 +349,12 @@ function operatorCardSaveDictionaries_() {
         throw new Error('В «Справочник для КО» → «Статус записи» отсутствует обязательное значение «' + required + '». Добавьте его вручную.');
       }
     });
-  return { holders: filterData.holders, employees: filterData.employees, card: card };
+  return {
+    holders: filterData.holders,
+    employees: filterData.employees,
+    clients: filterData.clients,
+    card: card
+  };
 }
 
 function operatorCardSaveWriteColumnGroups_(sheet, column, items) {

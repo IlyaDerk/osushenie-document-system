@@ -2216,4 +2216,62 @@ test('222. Web v2 creation keeps base type and concrete number contracts', () =>
   assert.match(text,/String\(row\[indexes\[H\.OBJECT_ID\]\]\)\.trim\(\) !== objectId[\s\S]*H\.DOCUMENT_TYPE_ID/);
 });
 
+test('223. full save dictionaries resolve object client to CL-ID and employee to ST-ID', () => {
+  const ctx=baseContext();
+  const clients=[
+    {id:'CL-1',name:'Иванов — ООО А',objectName:'Объект Альфа',status:'Активный'},
+    {id:'CL-2',name:'Петров — ООО Б',objectName:'Другой объект',status:'Активный'}
+  ];
+  ctx.operatorCardGetFilterData_=()=>({
+    holders:[{id:'ST-1',name:'Сотрудник',type:'employee'}],
+    employees:[{id:'ST-1',name:'Сотрудник'}], clients
+  });
+  const cardValues={
+    'Статус документа':['Новый'], 'Оригинал / ЭДО':['Оригинал'],
+    'Где документ':['Офис'], 'Оплачен':['Нет'], 'ГУ (Да/Нет)':['Нет'],
+    'Статус записи':['Активная','Архивная','Удалённая']
+  };
+  ctx.operatorCardReadUniqueColumn_=(key,header)=>cardValues[header].slice();
+  const dictionaries=ctx.operatorCardSaveDictionaries_();
+  assert.equal(dictionaries.clients,clients);
+
+  const client=partialSaveFixture(ctx,{card:{'Кто передал':'Иванов — ООО А'}});
+  let plan=ctx.operatorCardBuildSavePlan_([client.card],[client.fact],dictionaries,new Date(),'a','OP-20260825-0001');
+  assert.equal(plan.rowErrors.length,0);
+  assert.deepEqual(Array.from(plan.rows[0].changes,x=>[x.header,x.newValue]),[
+    ['ID сотрудника — кто передал','CL-1'],['Кто передал','Иванов — ООО А']
+  ]);
+
+  const other=partialSaveFixture(ctx,{card:{'Кто передал':'Петров — ООО Б'}});
+  plan=ctx.operatorCardBuildSavePlan_([other.card],[other.fact],dictionaries,new Date(),'a','OP-20260825-0001');
+  assert.equal(plan.rows.length,0); assert.match(plan.rowErrors[0].message,/актуальных справочников/);
+
+  const employee=partialSaveFixture(ctx,{card:{'Кто передал':'Сотрудник [ST-1]'}});
+  plan=ctx.operatorCardBuildSavePlan_([employee.card],[employee.fact],dictionaries,new Date(),'a','OP-20260825-0001');
+  assert.equal(plan.rowErrors.length,0);
+  assert.deepEqual(Array.from(plan.rows[0].changes,x=>[x.header,x.newValue]),[
+    ['ID сотрудника — кто передал','ST-1'],['Кто передал','Сотрудник']
+  ]);
+});
+
+test('224. full save dictionaries also resolve and clear the object client signer', () => {
+  const ctx=baseContext();
+  ctx.operatorCardGetFilterData_=()=>({holders:[],employees:[],clients:[
+    {id:'CL-1',name:'Иванов — ООО А',objectName:'Объект Альфа',status:'Активный'}
+  ]});
+  const values={
+    'Статус документа':['Новый'], 'Оригинал / ЭДО':['Оригинал'],
+    'Где документ':['Офис'], 'Оплачен':['Нет'], 'ГУ (Да/Нет)':['Нет'],
+    'Статус записи':['Активная','Архивная','Удалённая']
+  };
+  ctx.operatorCardReadUniqueColumn_=(key,header)=>values[header].slice();
+  const dictionaries=ctx.operatorCardSaveDictionaries_();
+  let fixture=partialSaveFixture(ctx,{card:{'Кто ответственный за подписание (заказчик)':'Иванов — ООО А'}});
+  let plan=ctx.operatorCardBuildSavePlan_([fixture.card],[fixture.fact],dictionaries,new Date(),'a','OP-20260825-0001');
+  assert.equal(plan.rowErrors.length,0); assert.equal(plan.rows[0].changes[0].newValue,'Иванов — ООО А');
+  fixture=partialSaveFixture(ctx,{fact:{'Кто ответственный за подписание (заказчик)':'Иванов — ООО А'},card:{'Кто ответственный за подписание (заказчик)':''}});
+  plan=ctx.operatorCardBuildSavePlan_([fixture.card],[fixture.fact],dictionaries,new Date(),'a','OP-20260825-0001');
+  assert.equal(plan.rowErrors.length,0); assert.equal(plan.rows[0].changes[0].newValue,'');
+});
+
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);
