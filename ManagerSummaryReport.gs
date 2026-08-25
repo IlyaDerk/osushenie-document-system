@@ -168,26 +168,28 @@ function managerSummaryMetricRow_(metrics) {
 function managerSummaryBuildOutput_(model) {
   const width = Math.max(13, model.statuses.length + 1);
   const blank = function () { return Array(width).fill(''); };
-  const rows = [], sections = [];
+  const rows = [], sectionRows = [], headerRows = [], metricValueRows = [];
   function add(values) { rows.push(values.concat(Array(width - values.length).fill(''))); }
+  function addTracked(values, target) { add(values); target.push(rows.length); }
   add([MANAGER_SUMMARY_.TITLE]);
   add(['Состояние на: ' + Utilities.formatDate(model.snapshotAt, model.timezone, 'dd.MM.yyyy HH:mm')]);
-  add([]); add(['Общее состояние']); sections.push(rows.length);
-  add(['Всего объектов', 'Проблемных объектов', 'Объектов без документов',
+  add([]); addTracked(['Общее состояние'], sectionRows);
+  addTracked(['Всего объектов', 'Проблемных объектов', 'Объектов без документов',
     'Всего активных документов', 'Подписано с обеих сторон', 'Не подписано',
-    'Требует исправления', 'Готовность документов, %', 'Документов без найденного объекта']);
-  add([model.objects.length, model.problems.length, model.objectsWithoutDocuments,
+    'Требует исправления', 'Готовность документов, %', 'Документов без найденного объекта'], headerRows);
+  addTracked([model.objects.length, model.problems.length, model.objectsWithoutDocuments,
     model.global.total, model.global.signed, model.global.unsigned, model.global.fix,
-    model.global.readiness, model.orphan.total]);
-  add([]); add(['Контроль сроков']); sections.push(rows.length);
-  add(['Просрочено документов', 'Срок в ближайшие 14 дней', 'Без плановой даты']);
-  add([model.global.overdue, model.global.soon, model.global.missing]);
-  add([]); add(['Распределение документов по статусам']); sections.push(rows.length);
-  add(['Всего документов'].concat(model.statuses)); add([model.global.total].concat(model.statusCounts));
-  add([]); add(['Проблемные объекты']); sections.push(rows.length);
-  add(['Название объекта', 'Ответственный прораб', 'Статус объекта', 'Всего документов',
+    model.global.readiness, model.orphan.total], metricValueRows);
+  add([]); addTracked(['Контроль сроков'], sectionRows);
+  addTracked(['Просрочено документов', 'Срок в ближайшие 14 дней', 'Без плановой даты'], headerRows);
+  addTracked([model.global.overdue, model.global.soon, model.global.missing], metricValueRows);
+  add([]); addTracked(['Распределение документов по статусам'], sectionRows);
+  addTracked(['Всего документов'].concat(model.statuses), headerRows);
+  addTracked([model.global.total].concat(model.statusCounts), metricValueRows);
+  add([]); addTracked(['Проблемные объекты'], sectionRows);
+  addTracked(['Название объекта', 'Ответственный прораб', 'Статус объекта', 'Всего документов',
     'Подписано с обеих сторон', 'Не подписано', 'Требует исправления', 'Просрочено',
-    'До 14 дней', 'Без плановой даты', 'Ближайший срок', 'Готовность, %', 'Контроль']);
+    'До 14 дней', 'Без плановой даты', 'Ближайший срок', 'Готовность, %', 'Контроль'], headerRows);
   const problemStart = rows.length + 1;
   model.problems.forEach(function (o) {
     const m = o.metrics; add([o.name, o.foreman, o.status, m.total, m.signed,
@@ -197,7 +199,8 @@ function managerSummaryBuildOutput_(model) {
     const m = model.orphan; add([MANAGER_SUMMARY_.ORPHANS, '', '', m.total, m.signed,
       m.unsigned, m.fix, m.overdue, m.soon, m.missing, m.nearest || '', m.readiness, m.action]);
   }
-  return { rows: rows, width: width, sections: sections,
+  return { rows: rows, width: width, sectionRows: sectionRows,
+    headerRows: headerRows, metricValueRows: metricValueRows,
     problemStart: problemStart, problemCount: model.problems.length + (model.hasOrphans ? 1 : 0) };
 }
 
@@ -213,11 +216,11 @@ function managerSummaryPublish_(spreadsheet, model) {
   sheet.setFrozenRows(2);
   sheet.getRange(1, 1, output.rows.length, output.width).setVerticalAlignment('middle').setWrap(true);
   sheet.getRange(1, 1, 1, output.width).setBackground('#1f4e78').setFontColor('#ffffff').setFontWeight('bold').setFontSize(14);
-  output.sections.forEach(function (row) { sheet.getRange(row, 1, 1, output.width).setBackground('#eeeeee').setFontWeight('bold'); });
-  [5, 9, 12, 15].forEach(function (row) { sheet.getRange(row, 1, 1, output.width).setBackground('#5b9bd5').setFontColor('#ffffff').setFontWeight('bold'); });
-  sheet.getRange(6, 1, 1, 9).setBackground('#d9eaf7');
+  output.sectionRows.forEach(function (row) { sheet.getRange(row, 1, 1, output.width).setBackground('#eeeeee').setFontWeight('bold'); });
+  output.headerRows.forEach(function (row) { sheet.getRange(row, 1, 1, output.width).setBackground('#5b9bd5').setFontColor('#ffffff').setFontWeight('bold'); });
+  output.metricValueRows.forEach(function (row) { sheet.getRange(row, 1, 1, output.width).setBackground('#d9eaf7'); });
   if (output.problemCount) sheet.getRange(output.problemStart, 1, output.problemCount, 13).setBackground('#eaf2f8');
-  sheet.getRange(6, 8).setNumberFormat('0.00%');
+  sheet.getRange(output.metricValueRows[0], 8).setNumberFormat('0.00%');
   if (output.problemCount) {
     sheet.getRange(output.problemStart, 11, output.problemCount, 1).setNumberFormat('dd.MM.yyyy');
     sheet.getRange(output.problemStart, 12, output.problemCount, 1).setNumberFormat('0.00%');

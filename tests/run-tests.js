@@ -2112,7 +2112,20 @@ test('222. orphan KPI counts canonical orphans',()=>assert.equal(managerFixture(
 test('223. orphan problem row is appended last',()=>{const f=managerFixture(),o=f.ctx.managerSummaryBuildOutput_(f.model);assert.equal(o.rows[o.rows.length-1][0],'⚠ Документы без найденного объекта');});
 test('224. overdue unsigned document is counted',()=>assert.equal(managerFixture().model.global.overdue,1));
 test('225. signed past-date document is excluded from deadlines',()=>assert.equal(managerFixture().model.objects.find(o=>o.id==='OBJ1').metrics.overdue,0));
-test('226. date today uses spreadsheet timezone and action',()=>assert.equal(managerFixture().model.objects.find(o=>o.id==='OBJ2').metrics.action,'Просрочено'));
+test('226. date today uses spreadsheet timezone and action',()=>{
+  const f=managerFixture();
+  const active=f.documents.filter(d=>d.values['ID документа']==='D4');
+  active[0].values['ID объекта']='OBJ1';
+  active[0].values['Дата окончания (по плану)']=new Date('2026-08-24T21:30:00Z');
+  active[0].values['Статус документа']='Новый';
+  const card=f.ctx.objectCardBuildModel_([f.objects[2]],active,f.dictionary,
+    new Date('2026-08-25T00:30:00Z'),'Europe/Moscow');
+  const metrics=f.ctx.managerSummaryBuildModel_(card,[f.objects[2]]).objects[0].metrics;
+  assert.equal(metrics.today,1);
+  assert.equal(metrics.soon,1);
+  assert.equal(metrics.overdue,0);
+  assert.equal(metrics.action,'Срок сегодня');
+});
 test('227. day 14 is included in soon bucket',()=>assert.equal(managerFixture().model.orphan.soon,1));
 test('228. day 15 is outside every deadline bucket',()=>{const f=managerFixture();f.documents[3].values['Дата окончания (по плану)']=new Date('2026-09-09T00:00:00Z');const c=f.ctx.objectCardBuildModel_(f.objects,f.documents,f.dictionary,new Date('2026-08-25T00:30:00Z'),'Europe/Moscow');const m=f.ctx.managerSummaryBuildModel_(c,f.objects);assert.equal(m.orphan.deadlineAssignments,0);});
 test('229. missing planned date is counted',()=>assert.equal(managerFixture().model.global.missing,1));
@@ -2132,5 +2145,11 @@ test('242. rebuildObjectCard remains present and unchanged by manager module',()
 test('243. protected application modules are not referenced',()=>assert.doesNotMatch(fs.readFileSync('ManagerSummaryReport.gs','utf8'),/OperatorCard|DocumentWebApp|CRUD/));
 test('244. output contains no charts',()=>assert.doesNotMatch(fs.readFileSync('ManagerSummaryReport.gs','utf8'),/Chart|newChart/));
 test('245. public manager rebuild exists',()=>assert.equal(typeof managerFixture().ctx.rebuildManagerSummary,'function'));
+test('246. output exposes exact formatting row plans',()=>{
+  const f=managerFixture(), output=f.ctx.managerSummaryBuildOutput_(f.model);
+  assert.deepEqual(output.sectionRows,[4,8,12,16]);
+  assert.deepEqual(output.headerRows,[5,9,13,17]);
+  assert.deepEqual(output.metricValueRows,[6,10,14]);
+});
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);
