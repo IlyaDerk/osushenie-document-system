@@ -29,3 +29,7 @@
 Generated read-only отчёт реализован изолированно в `ObjectCardReport.gs`.
 Архитектура snapshot, правила полного учёта и инструкция ручного hourly trigger
 описаны в [09_OBJECT_CARD_REPORT_SPEC.md](09_OBJECT_CARD_REPORT_SPEC.md).
+
+## Сводная руководителя
+
+Generated/read-only управленческий отчёт реализован в `ManagerSummaryReport.gs` и запускается публичной функцией `rebuildManagerSummary()`. KPI, сроки, сценарии контроля, orphan-учёт, инварианты и порядок ручного создания trigger после приёмки описаны в [10_MANAGER_SUMMARY_SPEC.md](10_MANAGER_SUMMARY_SPEC.md).

@@ -3,7 +3,7 @@ const assert = require('assert');
 const fs = require('fs');
 const vm = require('vm');
 const cp = require('child_process');
-const files = ['SystemCore.gs', 'DocumentArchitectureCore.gs', 'CreateObjectDocuments.gs', 'SyncObjectData.gs', 'ArchiveChangeHistory.gs', 'OperatorCard.gs', 'OperatorCardSave.gs', 'ObjectSheetControls.gs', 'Code.gs', 'WebAppAuth.gs', 'DocumentWebAppServer.gs', 'DocumentArchitectureV2Migration.gs', 'ObjectCardReport.gs'];
+const files = ['SystemCore.gs', 'DocumentArchitectureCore.gs', 'CreateObjectDocuments.gs', 'SyncObjectData.gs', 'ArchiveChangeHistory.gs', 'OperatorCard.gs', 'OperatorCardSave.gs', 'ObjectSheetControls.gs', 'Code.gs', 'WebAppAuth.gs', 'DocumentWebAppServer.gs', 'DocumentArchitectureV2Migration.gs', 'ObjectCardReport.gs', 'ManagerSummaryReport.gs'];
 const source = files.map(f => fs.readFileSync(f, 'utf8')).join('\n');
 let passed = 0;
 function test(name, fn) {
@@ -2084,5 +2084,53 @@ test('210. actual Без статуса and blank facts share one final status c
   assert.equal(m.globalStats.counts[indexes[0]],2);
   assert.equal(m.globalStats.total,m.globalStats.counts.reduce((a,b)=>a+b,0));
 });
+
+
+function managerFixture() {
+  const ctx=baseContext();
+  const row=(n,v)=>({sourceRow:n,values:v});
+  const objects=[row(3,{'ID объекта':'OBJ2','Название объекта':'Два','Ответственный прораб':'Петров','Статус объекта':'В работе'}),row(4,{'ID объекта':'OBJ10','Название объекта':'Десять','Ответственный прораб':'Иванов','Статус объекта':'Новый'}),row(5,{'ID объекта':'OBJ1','Название объекта':'Один','Ответственный прораб':'Сидоров','Статус объекта':'Готов'})];
+  const doc=(n,id,obj,status,record,date)=>row(n,{'ID документа':id,'ID объекта':obj,'Статус документа':status,'Статус записи':record,'Дата окончания (по плану)':date});
+  const documents=[doc(4,'D1','OBJ1','Подписан с обеих сторон','Активная',new Date('2026-08-01T00:00:00Z')),doc(5,'D2','OBJ2','Требует исправления','Активная',new Date('2026-08-24T20:00:00Z')),doc(6,'D3','OBJ2','','Активная',''),doc(7,'D4','MISSING','Новый','Активная',new Date('2026-09-08T00:00:00Z')),doc(8,'D5','OBJ2','Новый','Архивная',new Date('2020-01-01T00:00:00Z'))];
+  const dictionary=['Подписан с обеих сторон','Требует исправления'].map((x,i)=>row(i+3,{'Статус документа':x}));
+  const card=ctx.objectCardBuildModel_(objects,documents,dictionary,new Date('2026-08-25T00:30:00Z'),'Europe/Moscow');
+  const model=ctx.managerSummaryBuildModel_(card,objects); ctx.managerSummaryValidate_(model);
+  return {ctx,objects,documents,dictionary,card,model};
+}
+test('211. manager summary includes every real object',()=>assert.equal(managerFixture().model.objects.length,3));
+test('212. object without documents is problematic',()=>{const m=managerFixture().model;assert.ok(m.problems.some(o=>o.id==='OBJ10'));});
+test('213. manager summary inherits active-only Object Card model',()=>assert.equal(managerFixture().model.global.total,4));
+test('214. completely signed object is not problematic',()=>assert.ok(!managerFixture().model.problems.some(o=>o.id==='OBJ1')));
+test('215. unsigned object is problematic',()=>assert.ok(managerFixture().model.problems.some(o=>o.id==='OBJ2')));
+test('216. signed plus unsigned equals total',()=>{const g=managerFixture().model.global;assert.equal(g.signed+g.unsigned,g.total);});
+test('217. global readiness is signed divided by total',()=>assert.equal(managerFixture().model.global.readiness,.25));
+test('218. zero-document readiness is zero',()=>{const o=managerFixture().model.objects.find(o=>o.id==='OBJ10');assert.equal(o.metrics.readiness,0);});
+test('219. Требует исправления is counted',()=>assert.equal(managerFixture().model.global.fix,1));
+test('220. blank status remains canonical final dynamic status',()=>{const m=managerFixture().model;assert.equal(m.statuses[m.statuses.length-1],'Без статуса');});
+test('221. unknown actual statuses are dynamic',()=>assert.ok(managerFixture().model.statuses.includes('Новый')));
+test('222. orphan KPI counts canonical orphans',()=>assert.equal(managerFixture().model.orphan.total,1));
+test('223. orphan problem row is appended last',()=>{const f=managerFixture(),o=f.ctx.managerSummaryBuildOutput_(f.model);assert.equal(o.rows[o.rows.length-1][0],'⚠ Документы без найденного объекта');});
+test('224. overdue unsigned document is counted',()=>assert.equal(managerFixture().model.global.overdue,1));
+test('225. signed past-date document is excluded from deadlines',()=>assert.equal(managerFixture().model.objects.find(o=>o.id==='OBJ1').metrics.overdue,0));
+test('226. date today uses spreadsheet timezone and action',()=>assert.equal(managerFixture().model.objects.find(o=>o.id==='OBJ2').metrics.action,'Просрочено'));
+test('227. day 14 is included in soon bucket',()=>assert.equal(managerFixture().model.orphan.soon,1));
+test('228. day 15 is outside every deadline bucket',()=>{const f=managerFixture();f.documents[3].values['Дата окончания (по плану)']=new Date('2026-09-09T00:00:00Z');const c=f.ctx.objectCardBuildModel_(f.objects,f.documents,f.dictionary,new Date('2026-08-25T00:30:00Z'),'Europe/Moscow');const m=f.ctx.managerSummaryBuildModel_(c,f.objects);assert.equal(m.orphan.deadlineAssignments,0);});
+test('229. missing planned date is counted',()=>assert.equal(managerFixture().model.global.missing,1));
+test('230. deadline buckets are disjoint',()=>{const g=managerFixture().model.global;assert.equal(g.overdue+g.soon+g.missing,g.deadlineAssignments);});
+test('231. nearest unsigned deadline is retained',()=>assert.equal(managerFixture().model.objects.find(o=>o.id==='OBJ2').metrics.nearest.toISOString(),'2026-08-24T20:00:00.000Z'));
+test('232. invalid nonempty date fails before output planning',()=>{const f=managerFixture();f.documents[1].values['Дата окончания (по плану)']='25.08.2026';const c=f.ctx.objectCardBuildModel_(f.objects,f.documents,f.dictionary,new Date(),'UTC');assert.throws(()=>f.ctx.managerSummaryBuildModel_(c,f.objects),/некорректное/);});
+test('233. problem scenarios use prescribed priority',()=>{const m=managerFixture().model;assert.equal(m.problems[0].metrics.action,'Просрочено');});
+test('234. equal-priority object IDs use natural sorting',()=>{const f=managerFixture();assert.deepEqual(f.card.objects.map(o=>o.id),['OBJ1','OBJ2','OBJ10']);});
+test('235. manager invariants reject status mismatch',()=>{const f=managerFixture();f.model.statusCounts[0]++;assert.throws(()=>f.ctx.managerSummaryValidate_(f.model),/статусов/);});
+test('236. rebuild owns one encompassing lock section',()=>{const t=fs.readFileSync('ManagerSummaryReport.gs','utf8'),b=t.slice(t.indexOf('function rebuildManagerSummary()'),t.indexOf('function managerSummaryDay_'));assert.equal((b.match(/withDocumentLock_/g)||[]).length,1);['assertSystemSheetsStructure_','objectCardReadRows_','objectCardBuildModel_','managerSummaryValidate_','managerSummaryPublish_'].forEach(x=>assert.ok(b.includes(x)));});
+test('237. validation precedes destructive publish',()=>{const t=fs.readFileSync('ManagerSummaryReport.gs','utf8');assert.ok(t.indexOf('managerSummaryValidate_(model)')<t.indexOf('managerSummaryPublish_(spreadsheet, model)'));});
+test('238. report uses one batch setValues output',()=>assert.equal((fs.readFileSync('ManagerSummaryReport.gs','utf8').match(/\.setValues\(/g)||[]).length,1));
+test('239. report contains no spreadsheet formulas',()=>assert.doesNotMatch(fs.readFileSync('ManagerSummaryReport.gs','utf8'),/setFormula|QUERY\(|COUNTIFS?\(/i));
+test('240. report creates no automatic trigger',()=>assert.doesNotMatch(fs.readFileSync('ManagerSummaryReport.gs','utf8'),/newTrigger|ScriptApp|onOpen/));
+test('241. manager source access is read-only',()=>assert.doesNotMatch(fs.readFileSync('ManagerSummaryReport.gs','utf8'),/appendRow|deleteRow|setValue\(/));
+test('242. rebuildObjectCard remains present and unchanged by manager module',()=>assert.equal(typeof managerFixture().ctx.rebuildObjectCard,'function'));
+test('243. protected application modules are not referenced',()=>assert.doesNotMatch(fs.readFileSync('ManagerSummaryReport.gs','utf8'),/OperatorCard|DocumentWebApp|CRUD/));
+test('244. output contains no charts',()=>assert.doesNotMatch(fs.readFileSync('ManagerSummaryReport.gs','utf8'),/Chart|newChart/));
+test('245. public manager rebuild exists',()=>assert.equal(typeof managerFixture().ctx.rebuildManagerSummary,'function'));
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);
