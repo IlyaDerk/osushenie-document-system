@@ -2034,4 +2034,48 @@ test('206. invalid object contract fails before any output operation', () => {
   assert.throws(()=>f.ctx.objectCardBuildModel_(f.objects,f.documents,f.dictionary,new Date(),'UTC'),/не указан/);
 });
 
+test('207. source read, model build and publish share one document lock', () => {
+  const text=fs.readFileSync('ObjectCardReport.gs','utf8');
+  const body=text.slice(text.indexOf('function rebuildObjectCard()'),
+    text.indexOf('/** Reads one source'));
+  const lockStart=body.indexOf('withDocumentLock_(function ()');
+  assert.ok(lockStart>=0);
+  ['assertSystemSheetsStructure_(', "objectCardReadRows_('OBJECTS'",
+    'objectCardBuildModel_(', 'objectCardPublish_('].forEach(call => {
+    assert.ok(body.indexOf(call)>lockStart, call+' must be inside the lock');
+  });
+  assert.equal((body.match(/withDocumentLock_/g)||[]).length,1);
+});
+
+test('208. old generated row groups are removed with one bulk depth shift', () => {
+  const ctx=baseContext(); const calls=[];
+  const range={shiftRowGroupDepth:depth=>calls.push(depth)};
+  const sheet={getMaxRows:()=>1000,getRange:(row,column,count,width)=>{
+    assert.deepEqual([row,column,count,width],[1,1,1000,1]); return range;
+  }};
+  ctx.objectCardRemoveGroups_(sheet);
+  assert.deepEqual(calls,[-8]);
+  const text=fs.readFileSync('ObjectCardReport.gs','utf8');
+  assert.doesNotMatch(text,/getRowGroupDepth|getRowGroup\(row/);
+});
+
+test('209. dictionary Без статуса is unique and moved to the final column', () => {
+  const f=objectCardFixture();
+  f.dictionary.unshift({sourceRow:2,values:{'Статус документа':' Без статуса '}});
+  f.dictionary.push({sourceRow:7,values:{'Статус документа':'БЕЗ СТАТУСА'}});
+  const m=f.ctx.objectCardBuildModel_(f.objects,f.documents,f.dictionary,new Date(),'UTC');
+  assert.equal(m.statuses.filter(x=>f.ctx.objectCardKey_(x)===f.ctx.objectCardKey_('Без статуса')).length,1);
+  assert.equal(m.statuses[m.statuses.length-1],'Без статуса');
+});
+
+test('210. actual Без статуса and blank facts share one final status column', () => {
+  const f=objectCardFixture();
+  f.documents[0].values['Статус документа']=' без статуса ';
+  const m=f.ctx.objectCardBuildModel_(f.objects,f.documents,[],new Date(),'UTC');
+  const indexes=m.statuses.map((x,i)=>f.ctx.objectCardKey_(x)===f.ctx.objectCardKey_('Без статуса')?i:-1).filter(i=>i>=0);
+  assert.deepEqual(indexes,[m.statuses.length-1]);
+  assert.equal(m.globalStats.counts[indexes[0]],2);
+  assert.equal(m.globalStats.total,m.globalStats.counts.reduce((a,b)=>a+b,0));
+});
+
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);

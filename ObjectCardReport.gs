@@ -22,23 +22,22 @@ const OBJECT_CARD_REPORT_ = Object.freeze({
  * source contract and accounting invariant has passed.
  */
 function rebuildObjectCard() {
-  assertSystemSheetsStructure_(['OBJECTS', 'DOCUMENTS', 'CARD_DICTIONARY']);
-  const spreadsheet = getSystemSpreadsheet_();
-  const timezone = spreadsheet.getSpreadsheetTimeZone();
-  const snapshotAt = new Date();
-  const model = objectCardBuildModel_(
-    objectCardReadRows_('OBJECTS', [H.OBJECT_ID, H.OBJECT_NAME]),
-    objectCardReadRows_('DOCUMENTS', [
-      H.DOCUMENT_ID, H.OBJECT_ID, H.DOCUMENT_TYPE, H.CONTRACT_NUMBER,
-      H.DOCUMENT_NUMBER, H.DOCUMENT_DATE, H.DOCUMENT_STATUS,
-      H.CUSTOMER_SIGNING_RESPONSIBLE, H.RECORD_STATUS
-    ]),
-    objectCardReadRows_('CARD_DICTIONARY', [H.DOCUMENT_STATUS]),
-    snapshotAt,
-    timezone
-  );
-
   return withDocumentLock_(function () {
+    assertSystemSheetsStructure_(['OBJECTS', 'DOCUMENTS', 'CARD_DICTIONARY']);
+    const spreadsheet = getSystemSpreadsheet_();
+    const timezone = spreadsheet.getSpreadsheetTimeZone();
+    const snapshotAt = new Date();
+    const model = objectCardBuildModel_(
+      objectCardReadRows_('OBJECTS', [H.OBJECT_ID, H.OBJECT_NAME]),
+      objectCardReadRows_('DOCUMENTS', [
+        H.DOCUMENT_ID, H.OBJECT_ID, H.DOCUMENT_TYPE, H.CONTRACT_NUMBER,
+        H.DOCUMENT_NUMBER, H.DOCUMENT_DATE, H.DOCUMENT_STATUS,
+        H.CUSTOMER_SIGNING_RESPONSIBLE, H.RECORD_STATUS
+      ]),
+      objectCardReadRows_('CARD_DICTIONARY', [H.DOCUMENT_STATUS]),
+      snapshotAt,
+      timezone
+    );
     return objectCardPublish_(spreadsheet, model);
   });
 }
@@ -100,31 +99,40 @@ function objectCardStableSort_(items, comparator) {
 function objectCardBuildStatuses_(dictionaryRows, activeDocuments) {
   const dictionary = [];
   const known = {};
+  const noStatusKey = objectCardKey_(OBJECT_CARD_REPORT_.NO_STATUS);
+  let needsNoStatus = false;
   dictionaryRows.forEach(function (row) {
     const value = objectCardText_(row.values[H.DOCUMENT_STATUS]);
     const key = objectCardKey_(value);
     if (!value || known[key]) return;
     known[key] = value;
+    if (key === noStatusKey) {
+      needsNoStatus = true;
+      return;
+    }
     dictionary.push(value);
   });
   const unknownByKey = {};
-  let needsBlank = false;
   activeDocuments.forEach(function (document) {
     const value = objectCardText_(document.values[H.DOCUMENT_STATUS]);
     if (!value) {
-      needsBlank = true;
+      needsNoStatus = true;
       return;
     }
     const key = objectCardKey_(value);
+    if (key === noStatusKey) {
+      needsNoStatus = true;
+      return;
+    }
     if (!known[key] && !unknownByKey[key]) unknownByKey[key] = value;
   });
   const unknown = objectCardStableSort_(
     Object.keys(unknownByKey).map(function (key) { return unknownByKey[key]; }),
     objectCardNaturalCompare_
   );
-  return dictionary.concat(unknown).concat(needsBlank &&
-    !known[objectCardKey_(OBJECT_CARD_REPORT_.NO_STATUS)]
-    ? [OBJECT_CARD_REPORT_.NO_STATUS] : []);
+  return dictionary.concat(unknown).concat(
+    needsNoStatus ? [OBJECT_CARD_REPORT_.NO_STATUS] : []
+  );
 }
 
 function objectCardStats_(documents, statuses) {
@@ -274,15 +282,10 @@ function objectCardBuildOutput_(model) {
 }
 
 function objectCardRemoveGroups_(sheet) {
-  for (let row = 1; row <= sheet.getMaxRows(); row++) {
-    let depth = sheet.getRowGroupDepth(row);
-    while (depth > 0) {
-      const group = sheet.getRowGroup(row, depth);
-      if (!group) break;
-      group.remove();
-      depth = sheet.getRowGroupDepth(row);
-    }
-  }
+  // Google Sheets supports at most eight outline levels. Applying the maximum
+  // negative shift to the complete generated sheet removes every old level in
+  // one API operation, including groups below the previous data range.
+  sheet.getRange(1, 1, sheet.getMaxRows(), 1).shiftRowGroupDepth(-8);
 }
 
 /** The only destructive phase. It owns only the generated output sheet. */
