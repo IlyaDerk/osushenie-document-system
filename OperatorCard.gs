@@ -7,6 +7,24 @@ function operatorCardFold_(value) {
   return operatorCardNormalizeText_(value).toLocaleLowerCase('ru');
 }
 
+/** Canonical client-contact label. Missing parts are never guessed. */
+function operatorCardClientDisplay_(contactName, organizationName) {
+  const contact = operatorCardNormalizeText_(contactName);
+  const organization = operatorCardNormalizeText_(organizationName);
+  return contact && organization ? contact + ' — ' + organization : '';
+}
+
+function operatorCardIsActiveClient_(client) {
+  return operatorCardFold_(client.status) === operatorCardFold_('Активный');
+}
+
+function operatorCardClientsForObject_(clients, objectName) {
+  const key = operatorCardFold_(objectName);
+  return (clients || []).filter(function (client) {
+    return operatorCardIsActiveClient_(client) && operatorCardFold_(client.objectName) === key;
+  });
+}
+
 function operatorCardReadDictionary_(sheetKey, fields) {
   const context = getSystemSheetContext_(sheetKey);
   const lastRow = context.sheet.getLastRow();
@@ -77,8 +95,25 @@ function operatorCardGetFilterData_() {
     { key: 'position', header: H.EMPLOYEE_POSITION }
   ]).sort(function (a, b) { return operatorCardNaturalCompare_(a.name, b.name) || operatorCardNaturalCompare_(a.id, b.id); });
   const clients = operatorCardReadDictionary_('CLIENTS', [
-    { key: 'id', header: H.CLIENT_ID }, { key: 'name', header: H.CLIENT_NAME }
-  ]).sort(function (a, b) { return operatorCardNaturalCompare_(a.name, b.name) || operatorCardNaturalCompare_(a.id, b.id); });
+    { key: 'id', header: H.CLIENT_ID },
+    { key: 'organizationName', header: H.CLIENT_NAME },
+    { key: 'objectName', header: H.OBJECT_NAME },
+    { key: 'name', header: H.EMPLOYEE_NAME },
+    { key: 'status', header: H.CLIENT_STATUS }
+  ]).map(function (client) {
+    client.contactName = client.name;
+    client.name = operatorCardClientDisplay_(client.contactName, client.organizationName);
+    return client;
+  }).filter(function (client) { return client.name; }).sort(function (a, b) {
+    return operatorCardNaturalCompare_(a.name, b.name) || operatorCardNaturalCompare_(a.id, b.id);
+  });
+  const clientIds = {};
+  clients.forEach(function (client) {
+    if (clientIds[client.id]) {
+      throw new Error('В листе «Справочник клиентов» повторяется ID клиента «' + client.id + '».');
+    }
+    clientIds[client.id] = true;
+  });
   const holders = employees.map(function (x) { return { id: x.id, name: x.name, type: 'employee' }; }).concat(clients.map(function (x) { return { id: x.id, name: x.name, type: 'client' }; }));
   const documentTypes = operatorCardReadDictionary_('DOCUMENT_TYPES', [
     { key: 'id', header: H.DOCUMENT_TYPE_ID }, { key: 'name', header: H.DOCUMENT_TYPE }
@@ -209,6 +244,39 @@ function operatorCardGetValidationData_(filterData) {
   ];
 }
 
+/** Applies and clears object-specific validations with one batch write. */
+function operatorCardApplyRowValidations_(cardContext, cardRows, filterData) {
+  if (!cardContext.sheet.getRange) return;
+  const cardStartColumn = cardContext.headerMap[sysNormalizeHeader_(H.DOCUMENT_ID)];
+  const objectOffset = cardContext.headerMap[sysNormalizeHeader_(H.OBJECT_NAME)] - cardStartColumn;
+  const firstColumn = cardContext.headerMap[sysNormalizeHeader_(H.TRANSFERRED_BY)];
+  const signerColumn = cardContext.headerMap[sysNormalizeHeader_(H.CUSTOMER_SIGNING_RESPONSIBLE)];
+  const width = signerColumn - firstColumn + 1;
+  const rowCount = cardContext.sheet.getMaxRows
+    ? cardContext.sheet.getMaxRows() - cardContext.config.dataStartRow + 1 : cardRows.length;
+  const employeeLabels = filterData.employees.map(function (employee) {
+    return operatorCardDisplayLabel_(employee.name, employee.id);
+  });
+  const rules = Array.from({ length: rowCount }, function (_, rowIndex) {
+    const output = Array(width).fill(null);
+    if (rowIndex < cardRows.length) {
+      const row = cardRows[rowIndex];
+      const clients = operatorCardClientsForObject_(filterData.clients, row[objectOffset]);
+      const clientLabels = clients.map(function (client) { return client.name; });
+      const transferred = operatorCardMergeUniqueValues_([employeeLabels, clientLabels]);
+      output[0] = transferred.length ? SpreadsheetApp.newDataValidation()
+        .requireValueInList(transferred, true).setAllowInvalid(true).build() : null;
+      output[signerColumn - firstColumn] = clientLabels.length
+        ? SpreadsheetApp.newDataValidation().requireValueInList(clientLabels, true)
+          .setAllowInvalid(true).build() : null;
+    }
+    return output;
+  });
+  cardContext.sheet.getRange(
+    cardContext.config.dataStartRow, firstColumn, rowCount, width
+  ).setDataValidations(rules);
+}
+
 function operatorCardApplyValidations_(cardContext, validationData) {
   const rowCount = cardContext.sheet.getMaxRows() - cardContext.config.dataStartRow + 1;
   if (rowCount < 1) return;
@@ -335,7 +403,10 @@ function operatorCardPrepareRows_(rows, indexes, filters, dateRange, dataStartRo
     const sharedFieldCount = SYSTEM_CONFIG.SHEETS.OPERATOR_CARD.requiredHeaders.length - 2;
     const cardRow = item.row.slice(sourceStartIndex, sourceStartIndex + sharedFieldCount);
     cardRow[indexes.documentHolder - sourceStartIndex] = operatorCardDisplayLabel_(item.row[indexes.documentHolder], item.row[indexes.holderId]);
-    cardRow[indexes.transferredBy - sourceStartIndex] = operatorCardDisplayLabel_(item.row[indexes.transferredBy], item.row[indexes.transferredById]);
+    const transferredId = operatorCardNormalizeText_(item.row[indexes.transferredById]);
+    cardRow[indexes.transferredBy - sourceStartIndex] = transferredId.indexOf(SYSTEM_CONFIG.ID_PREFIXES.CLIENT) === 0
+      ? operatorCardNormalizeText_(item.row[indexes.transferredBy])
+      : operatorCardDisplayLabel_(item.row[indexes.transferredBy], transferredId);
     return cardRow.concat([item.row[indexes.recordStatus], item.sheetRow]);
   }), warnings: warnings, duplicateIdsCount: Object.keys(selectedDuplicateIds).length, invalidDatesCount: invalidDates };
 }
@@ -491,8 +562,9 @@ function operatorCardApply_(rawFilters, suppressJournal) {
         documentHolder: index(H.DOCUMENT_HOLDER), transferredBy: index(H.TRANSFERRED_BY)
       }, filters, range, documents.config.dataStartRow, documentsStartColumn - 1, dictionaries);
       result.loadedCount = result.cardRows.length;
-      operatorCardApplyValidations_(card, operatorCardGetValidationData_(dictionaries));
       operatorCardReplace_(card, result.cardRows);
+      operatorCardApplyValidations_(card, operatorCardGetValidationData_(dictionaries));
+      operatorCardApplyRowValidations_(card, result.cardRows, dictionaries);
       cardWritten = true;
       const status = result.loadedCount === 0 ? SYSTEM_CONFIG.VALUES.OPERATION_STATUS_NO_CHANGES : (result.warnings.length ? SYSTEM_CONFIG.VALUES.OPERATION_STATUS_SUCCESS_WITH_WARNINGS : SYSTEM_CONFIG.VALUES.OPERATION_STATUS_SUCCESS);
       const finishedAt = new Date();

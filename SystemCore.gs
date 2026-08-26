@@ -408,8 +408,12 @@ const SYSTEM_CONFIG = {
       requiredHeaders: [
         H.CLIENT_ID,
         H.CLIENT_NAME,
-        H.PHONE,
+        H.OBJECT_NAME,
+        H.EMPLOYEE_NAME,
+        H.EMPLOYEE_POSITION,
         H.EMAIL,
+        H.PHONE,
+        H.COMMENT,
         H.CLIENT_STATUS
       ]
     },
