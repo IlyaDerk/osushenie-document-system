@@ -49,6 +49,8 @@ const SYSTEM_HEADERS = Object.freeze({
   DOCUMENT_HOLDER: 'У кого документ',
   DOCUMENT_LOCATION: 'Где документ',
   TRANSFERRED_BY: 'Кто передал',
+  TRANSFERRED_AT: 'Когда передан',
+  IMPLEMENTATION_DAYS: 'Дней на реализацию',
   CUSTOMER_SIGNING_RESPONSIBLE:
     'Кто ответственный за подписание (заказчик)',
 
@@ -115,12 +117,19 @@ const SYSTEM_HEADERS = Object.freeze({
   EMPLOYEE_GROUP: 'Группа',
   HIRE_DATE: 'Дата найма',
   DISMISSAL_DATE: 'Дата увольнения',
+  PARTICIPATES_IN_DOCUMENT_FLOW: 'Участвует в документообороте',
 
   // Справочник клиентов
   CLIENT_ID: 'ID клиента',
   CLIENT_NAME: 'Наименование клиента',
   PHONE: 'Телефон',
+  CLIENT_ADDRESS: 'Адрес клиента',
   CLIENT_STATUS: 'Статус клиента',
+
+  // Справочник условий и действий
+  RULE_ID: 'ID правила',
+  ACTION: 'Действие',
+  ACTIVE: 'Активно',
 
   // Справочник типов документов
   MANDATORY: 'Обязательность',
@@ -163,7 +172,9 @@ const SYSTEM_CONFIG = {
     ARCHIVED_RECORD_STATUS: 'Архивная',
     DELETED_RECORD_STATUS: 'Удалённая',
 
-    INITIAL_DOCUMENT_STATUS: 'Ожидает заполнения',
+    INITIAL_DOCUMENT_STATUS: 'На подготовке',
+    DOCUMENT_FLOW_YES: 'Да',
+    ACTIVE_RULE: 'Да',
 
     AUTO_CREATE_DOCUMENTS: 'Автоматически',
     DOCUMENT_REPEATABILITY_ONE: 'Один',
@@ -206,6 +217,9 @@ const SYSTEM_CONFIG = {
     OBJECT_DATA_SYNC_SOURCE: 'Синхронизация данных объектов',
     DOCUMENT_V2_MIGRATION_SOURCE: 'Миграция архитектуры документов v2',
     DOCUMENT_V2_MIGRATION_OPERATION_TYPE: 'Миграция данных документов',
+    DOCUMENT_WORKFLOW_MIGRATION_SOURCE: 'Миграция workflow-данных',
+    DOCUMENT_WORKFLOW_MIGRATION_OPERATION_TYPE:
+      'Миграция статусов и типа КС2/КС3',
     CHANGE_HISTORY_ARCHIVE_SOURCE: 'Архивация истории изменений',
     OBJECT_SHEET_CHANGE_SOURCE: 'Лист объектов',
     AUTOMATION_SOURCE: 'Автоматизация',
@@ -290,6 +304,8 @@ const SYSTEM_CONFIG = {
         H.DOCUMENT_HOLDER,
         H.DOCUMENT_LOCATION,
         H.TRANSFERRED_BY,
+        H.TRANSFERRED_AT,
+        H.IMPLEMENTATION_DAYS,
         H.CUSTOMER_SIGNING_RESPONSIBLE,
         H.PAID,
         H.DOCUMENT_AMOUNT,
@@ -327,6 +343,8 @@ const SYSTEM_CONFIG = {
         H.DOCUMENT_HOLDER,
         H.DOCUMENT_LOCATION,
         H.TRANSFERRED_BY,
+        H.TRANSFERRED_AT,
+        H.IMPLEMENTATION_DAYS,
         H.CUSTOMER_SIGNING_RESPONSIBLE,
         H.PAID,
         H.DOCUMENT_AMOUNT,
@@ -397,7 +415,8 @@ const SYSTEM_CONFIG = {
         H.EMAIL,
         H.EMPLOYEE_GROUP,
         H.HIRE_DATE,
-        H.DISMISSAL_DATE
+        H.DISMISSAL_DATE,
+        H.PARTICIPATES_IN_DOCUMENT_FLOW
       ]
     },
 
@@ -413,6 +432,7 @@ const SYSTEM_CONFIG = {
         H.EMPLOYEE_POSITION,
         H.EMAIL,
         H.PHONE,
+        H.CLIENT_ADDRESS,
         H.COMMENT,
         H.CLIENT_STATUS
       ]
@@ -429,6 +449,21 @@ const SYSTEM_CONFIG = {
         H.CREATE_ON_OBJECT_CREATION,
         H.EXECUTION_DEADLINE,
         H.REPEATABILITY
+      ]
+    },
+
+    WORKFLOW_RULES: {
+      name: 'Справочник условий и действий',
+      headerRow: 4,
+      dataStartRow: 5,
+      requiredHeaders: [
+        H.RULE_ID,
+        H.DOCUMENT_TYPE,
+        H.DOCUMENT_STATUS,
+        H.DOCUMENT_LOCATION,
+        H.IMPLEMENTATION_DAYS,
+        H.ACTION,
+        H.ACTIVE
       ]
     },
 
@@ -524,6 +559,16 @@ const SYSTEM_CONFIG = {
       cardHeader: H.TRANSFERRED_BY,
       factHeader: H.TRANSFERRED_BY,
       editable: true
+    },
+    {
+      cardHeader: H.TRANSFERRED_AT,
+      factHeader: H.TRANSFERRED_AT,
+      editable: false
+    },
+    {
+      cardHeader: H.IMPLEMENTATION_DAYS,
+      factHeader: H.IMPLEMENTATION_DAYS,
+      editable: false
     },
     {
       cardHeader: H.CUSTOMER_SIGNING_RESPONSIBLE,
