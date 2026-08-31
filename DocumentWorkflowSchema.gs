@@ -77,10 +77,10 @@ function readActiveDocumentWorkflowRules_() {
   const column = function (header) {
     return context.headerMap[sysNormalizeHeader_(header)] - 1;
   };
-  const activeRules = rows.map(function (row, offset) {
+  const activeRules = rows.map(function (row, originalIndex) {
     return {
       row: row,
-      sheetRow: context.config.dataStartRow + offset
+      sheetRow: context.config.dataStartRow + originalIndex
     };
   }).filter(function (item) {
     return sysNormalizeHeader_(item.row[column(H.ACTIVE)]) ===

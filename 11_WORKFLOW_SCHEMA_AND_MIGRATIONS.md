@@ -53,6 +53,10 @@ exact `WORKFLOW_RULES` header contract even when it contains no data rows. The
 code does not create the sheet or change its visibility; the owner hides it
 manually in the working spreadsheet.
 
+This is a deployment prerequisite, not a rules-data prerequisite: create the
+sheet manually before installing the new code regardless of whether any rule
+rows have been prepared. Do not rely on the code to provision an empty sheet.
+
 ## Validation and future deadline calculation
 
 `Когда передан` accepts blank or a valid `Date`. `Дней на реализацию` accepts
