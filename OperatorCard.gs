@@ -99,6 +99,7 @@ function operatorCardGetFilterData_() {
     { key: 'organizationName', header: H.CLIENT_NAME },
     { key: 'objectName', header: H.OBJECT_NAME },
     { key: 'name', header: H.EMPLOYEE_NAME },
+    { key: 'address', header: H.CLIENT_ADDRESS },
     { key: 'status', header: H.CLIENT_STATUS }
   ]).map(function (client) {
     client.contactName = client.name;

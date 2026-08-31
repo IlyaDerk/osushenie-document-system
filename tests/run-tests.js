@@ -3,7 +3,7 @@ const assert = require('assert');
 const fs = require('fs');
 const vm = require('vm');
 const cp = require('child_process');
-const files = ['SystemCore.gs', 'DocumentArchitectureCore.gs', 'CreateObjectDocuments.gs', 'SyncObjectData.gs', 'ArchiveChangeHistory.gs', 'OperatorCard.gs', 'OperatorCardSave.gs', 'ObjectSheetControls.gs', 'Code.gs', 'WebAppAuth.gs', 'DocumentWebAppServer.gs', 'DocumentArchitectureV2Migration.gs', 'ObjectCardReport.gs', 'ManagerSummaryReport.gs'];
+const files = ['SystemCore.gs', 'DocumentArchitectureCore.gs', 'CreateObjectDocuments.gs', 'SyncObjectData.gs', 'ArchiveChangeHistory.gs', 'DocumentWorkflowSchema.gs', 'OperatorCard.gs', 'OperatorCardSave.gs', 'ObjectSheetControls.gs', 'Code.gs', 'WebAppAuth.gs', 'DocumentWebAppServer.gs', 'DocumentArchitectureV2Migration.gs', 'ObjectCardReport.gs', 'ManagerSummaryReport.gs'];
 const source = files.map(f => fs.readFileSync(f, 'utf8')).join('\n');
 let passed = 0;
 function test(name, fn) {
@@ -306,7 +306,7 @@ test('22. dictionary guard never weakens foreign protection and stays idempotent
     getLastRow: () => 3,
     getRange(row, column, rowCount, columnCount) {
       if (rowCount === undefined) return cell(row, column);
-      const value = column === 1 ? 'Ожидает заполнения' : 'Активная';
+      const value = column === 1 ? 'На подготовке' : 'Активная';
       return { getValues: () => [[value]] };
     }
   };
@@ -363,7 +363,7 @@ test('24. 18 created documents produce 18 history rows, not field-per-value rows
 test('25. initial creation snapshot contains main nonempty fields', () => {
   const snapshot = creationPrepareFixture(1).changeRows[0].newValue;
   ['ID документа: DOC-OBJ01-0001','ID объекта: OBJ01','Название объекта: Объект 1','Тип документа: Акт','ID типа документа: DT-1',
-   'Номер договора: DOG-1','Номер документа: 1','Статус документа: Ожидает заполнения','Статус объекта: Действующий',
+   'Номер договора: DOG-1','Номер документа: 1','Статус документа: На подготовке','Статус объекта: Действующий',
    'Дата начала работ:','Дата окончания (по плану):','Дата окончания (по факту):',
    'Ответственный прораб: Иванов','ID ответственного прораба: ST-1','Источник создания: Создание документов по объекту',
    'Статус записи: Активная'].forEach(part => assert.ok(snapshot.includes(part), part));
@@ -657,11 +657,11 @@ test('53. unknown IDs are rejected by server validation', () => {
 });
 test('54. header contract accepts extra fact columns but rejects reordering', () => {
   const ctx = baseContext();
-  const headers24 = ['ID документа','ID объекта','Название объекта','Тип документа','Номер договора','Номер документа','Дата документа','Статус документа','Оригинал / ЭДО','Комментарий','У кого документ','Где документ','Кто передал','Кто ответственный за подписание (заказчик)','Оплачен','Сумма документа','ГУ (Да/Нет)','Условия ГУ','Статус объекта','Ответственный прораб','Дата начала работ','Дата окончания (по плану)','Дата окончания (по факту)','Дата создания','Дата обновления','ID типа документа','Кто обновил (email)']; const headers=headers24.concat(['Статус записи','Номер строки в таблице фактов']);
+  const headers24 = ['ID документа','ID объекта','Название объекта','Тип документа','Номер договора','Номер документа','Дата документа','Статус документа','Оригинал / ЭДО','Комментарий','У кого документ','Где документ','Кто передал','Когда передан','Дней на реализацию','Кто ответственный за подписание (заказчик)','Оплачен','Сумма документа','ГУ (Да/Нет)','Условия ГУ','Статус объекта','Ответственный прораб','Дата начала работ','Дата окончания (по плану)','Дата окончания (по факту)','Дата создания','Дата обновления','ID типа документа','Кто обновил (email)']; const headers=headers24.concat(['Статус записи','Номер строки в таблице фактов']);
   assert.equal(ctx.operatorCardValidateHeaders_(headers.concat(['extra']), headers, 'Документы объектов', 'Карточка'), true);
   const swapped = headers.slice(); [swapped[0], swapped[1]] = [swapped[1], swapped[0]];
   assert.throws(() => ctx.operatorCardValidateHeaders_(swapped, headers, 'Документы объектов', 'Карточка'), /позиция 2/);
-  assert.throws(() => ctx.operatorCardValidateHeaders_(headers24.concat(['Техническое поле']), headers.concat(['Лишний заголовок']), 'Документы объектов', 'Карточка'), /позиция 27|колонка 30/);
+  assert.throws(() => ctx.operatorCardValidateHeaders_(headers24.concat(['Техническое поле']), headers.concat(['Лишний заголовок']), 'Документы объектов', 'Карточка'), /позиция 29|колонка 32/);
   assert.equal(ctx.operatorCardValidateHeaders_(headers24.concat(['Техническое поле']), headers, 'Документы объектов', 'Карточка'), true);
 });
 test('55. active rows, combined ID filters and normalized status are applied', () => {
@@ -674,7 +674,7 @@ test('55. active rows, combined ID filters and normalized status are applied', (
   ]; while(rows[0].length<31) rows.forEach(r=>r.push(''));
   const filters = ctx.operatorCardNormalizeFilters_({ object:{allObjects:false,objectId:'2'}, documentTypeId:'T1', documentStatus:'готов', holderId:'E1', foremanId:'F1' });
   const result = ctx.operatorCardPrepareRows_(rows,indexes,filters,{active:false},4);
-  assert.equal(result.activeCount,1); assert.equal(result.rows.length,1); assert.equal(result.cardRows[0].length,29);
+  assert.equal(result.activeCount,1); assert.equal(result.rows.length,1); assert.equal(result.cardRows[0].length,31);
 });
 test('56. natural sorting uses object, type, document and physical row', () => {
   const ctx = baseContext(); const i={documentId:0,objectId:1,documentTypeId:2,documentStatus:3,holderId:4,foremanId:5,createdAt:6,recordStatus:7,transferredById:30,documentHolder:9,transferredBy:11};
@@ -691,12 +691,12 @@ test('57. active duplicate group is retained and reports physical rows once per 
 test('58. card replacement performs one 26-column setValues and clears tail', () => {
   const ctx=baseContext(); let calls=0, written;
   const sheet={getLastRow:()=>8,getRange(row,col,count,width){return {getValues:()=>[['old1'],['old2'],['']],setValues(values){calls++;written={row,col,count,width,values}}}}};
-  ctx.operatorCardReplace_({sheet,config:{dataStartRow:6,requiredHeaders:Array(29)},headerMap:{'ID документа':1}},[[1,2].concat(Array(27).fill(''))]);
-  assert.equal(calls,1); assert.equal(written.width,29); assert.equal(written.values.length,2); assert.ok(written.values[1].every(v=>v===''));
+  ctx.operatorCardReplace_({sheet,config:{dataStartRow:6,requiredHeaders:Array(31)},headerMap:{'ID документа':1}},[[1,2].concat(Array(29).fill(''))]);
+  assert.equal(calls,1); assert.equal(written.width,31); assert.equal(written.values.length,2); assert.ok(written.values[1].every(v=>v===''));
 });
 test('59. zero result clears old card in one batch', () => {
   const ctx=baseContext(); let values; const sheet={getLastRow:()=>6,getRange(){return {getValues:()=>[['old']],setValues(v){values=v}}}};
-  ctx.operatorCardReplace_({sheet,config:{dataStartRow:6,requiredHeaders:Array(29)},headerMap:{'ID документа':1}},[]); assert.equal(values.length,1); assert.equal(values[0].length,29); assert.ok(values[0].every(v=>v===''));
+  ctx.operatorCardReplace_({sheet,config:{dataStartRow:6,requiredHeaders:Array(31)},headerMap:{'ID документа':1}},[]); assert.equal(values.length,1); assert.equal(values[0].length,31); assert.ok(values[0].every(v=>v===''));
 });
 test('60. operator implementation never writes facts, dictionaries, or change history', () => {
   const text=fs.readFileSync('OperatorCard.gs','utf8');
@@ -730,8 +730,8 @@ test('63. active date filter excludes blank and warns about invalid nonblank dat
 });
 
 
-const operatorWorkflowCardHeaders = ['ID документа','ID объекта','Название объекта','Тип документа','Номер договора','Номер документа','Дата документа','Статус документа','Оригинал / ЭДО','Комментарий','У кого документ','Где документ','Кто передал','Кто ответственный за подписание (заказчик)','Оплачен','Сумма документа','ГУ (Да/Нет)','Условия ГУ','Статус объекта','Ответственный прораб','Дата начала работ','Дата окончания (по плану)','Дата окончания (по факту)','Дата создания','Дата обновления','ID типа документа','Кто обновил (email)'].concat(['Статус записи','Номер строки в таблице фактов']);
-const operatorWorkflowDocumentHeaders = operatorWorkflowCardHeaders.slice(0,27).concat(['ID сотрудника — у кого документ','ID сотрудника — кто передал','ID ответственного прораба','Дата изменения статуса документа','Отчётный период','Источник создания','Статус записи']);
+const operatorWorkflowCardHeaders = ['ID документа','ID объекта','Название объекта','Тип документа','Номер договора','Номер документа','Дата документа','Статус документа','Оригинал / ЭДО','Комментарий','У кого документ','Где документ','Кто передал','Когда передан','Дней на реализацию','Кто ответственный за подписание (заказчик)','Оплачен','Сумма документа','ГУ (Да/Нет)','Условия ГУ','Статус объекта','Ответственный прораб','Дата начала работ','Дата окончания (по плану)','Дата окончания (по факту)','Дата создания','Дата обновления','ID типа документа','Кто обновил (email)'].concat(['Статус записи','Номер строки в таблице фактов']);
+const operatorWorkflowDocumentHeaders = operatorWorkflowCardHeaders.slice(0,29).concat(['ID сотрудника — у кого документ','ID сотрудника — кто передал','ID ответственного прораба','Дата изменения статуса документа','Отчётный период','Источник создания','Статус записи']);
 const operatorWorkflowOperationHeaders = ['ID операции','Дата и время начала','Дата и время завершения','Кто запустил (email)','Источник операции','Тип операции','Статус операции','Документов загружено в карточку','Документов с изменениями','Строк факта обновлено','Полей изменено','Дублирующихся ID найдено','Ошибок','Время выполнения, сек.','Текст ошибки / комментарий'];
 
 function operatorWorkflowFixture(options = {}) {
@@ -856,7 +856,7 @@ test('70. shifted facts and independently shifted card use their ID-document sta
     documentHolder: physicalIndexes['У кого документ'], transferredBy: physicalIndexes['Кто передал']
   }, ctx.operatorCardNormalizeFilters_({}), {active:false}, 4, 1);
   assert.equal(prepared.cardRows.length, 1);
-  assert.equal(prepared.cardRows[0].length, 29);
+  assert.equal(prepared.cardRows[0].length, 31);
   assert.equal(prepared.cardRows[0][0], 'DOC-7');
   assert.ok(!prepared.cardRows[0].includes('служебное значение слева'));
 
@@ -868,11 +868,11 @@ test('70. shifted facts and independently shifted card use their ID-document sta
       return { getValues: () => [['OLD-DOC']], setValues(values) { this.values = values; } };
     }
   };
-  ctx.operatorCardReplace_({sheet, config:{dataStartRow:6,requiredHeaders:Array(29)}, headerMap:{'ID документа':3}}, prepared.cardRows);
+  ctx.operatorCardReplace_({sheet, config:{dataStartRow:6,requiredHeaders:Array(31)}, headerMap:{'ID документа':3}}, prepared.cardRows);
   assert.equal(rangeCalls.length, 2);
   assert.deepEqual(rangeCalls.map(call => call.column), [3, 3]);
   assert.equal(rangeCalls[0].columnCount, 1);
-  assert.equal(rangeCalls[1].columnCount, 29);
+  assert.equal(rangeCalls[1].columnCount, 31);
   assert.ok(rangeCalls.every(call => call.column >= 3), 'columns left of the card block must not be touched');
 });
 
@@ -973,20 +973,20 @@ test('74. card validations use headerMap ranges and survive reload, zero result,
       };
     }
   };
-  const context = {sheet,config:{dataStartRow:6,requiredHeaders:Array(29)},headerMap:Object.assign({'ID документа':3},validationColumns)};
+  const context = {sheet,config:{dataStartRow:6,requiredHeaders:Array(31)},headerMap:Object.assign({'ID документа':3},validationColumns)};
   const data = Object.keys(validationColumns).map(header => ({header,values:[header+' value']}));
   ctx.operatorCardApplyValidations_(context, data);
   assert.deepEqual(Object.keys(validations).map(Number).sort((a,b)=>a-b), [8,9,11,12,13,14,16]);
   assert.ok(Object.values(validations).every(item => item.row===6 && item.rowCount===15 && item.columnCount===1));
   assert.ok(Object.values(validations).every(item => item.rule.allowInvalid===true));
   const snapshot = JSON.stringify(validations);
-  const row = ['DOC'].concat(Array(26).fill(''));
+  const row = ['DOC'].concat(Array(30).fill(''));
   ctx.operatorCardReplace_(context,[row]);
   ctx.operatorCardReplace_(context,[]);
   ctx.operatorCardReplace_(context,[row]);
   assert.equal(JSON.stringify(validations), snapshot, 'setValues must preserve validations');
   assert.equal(writes.length,3);
-  assert.ok(writes.every(write => write.column===3 && write.columnCount===29));
+  assert.ok(writes.every(write => write.column===3 && write.columnCount===31));
 });
 
 test('75. sidebar groups creation dates and reset is local-only for all filters', () => {
@@ -1021,7 +1021,7 @@ test('76. empty sidebar filter contract means all objects and no additional rest
 });
 
 test('77. save card contract has unchanged first 24 fields plus status and physical row', () => {
-  const ctx=baseContext(); const headers=Array.from(ctx.SYSTEM_CONFIG ? ctx.SYSTEM_CONFIG.SHEETS.OPERATOR_CARD.requiredHeaders : []);
+  const ctx=baseContext(); const headers=Array.from(ctx.SYSTEM_CONFIG ? vm.runInContext('SYSTEM_CONFIG.SHEETS.OPERATOR_CARD.requiredHeaders', ctx) : []);
   // top-level const is lexical in vm; inspect source for the runtime contract instead.
   const text=fs.readFileSync('SystemCore.gs','utf8');
   assert.match(text,/H\.UPDATED_BY_EMAIL,\s*H\.RECORD_STATUS,\s*H\.FACT_ROW_NUMBER/);
@@ -1317,9 +1317,9 @@ test('114. final object-name contracts match physical sheets', () => {
   assert.equal(vm.runInContext('H.OBJECT_NAME',ctx),'Название объекта');
   const documents=Array.from(vm.runInContext('SYSTEM_CONFIG.SHEETS.DOCUMENTS.requiredHeaders',ctx));
   const card=Array.from(vm.runInContext('SYSTEM_CONFIG.SHEETS.OPERATOR_CARD.requiredHeaders',ctx));
-  assert.equal(documents.length,34); assert.equal(documents[2],'Название объекта');
-  assert.equal(card.length,29); assert.equal(card[2],'Название объекта');
-  assert.deepEqual(card.slice(0,27),documents.slice(0,27));
+  assert.equal(documents.length,36); assert.equal(documents[2],'Название объекта');
+  assert.equal(card.length,31); assert.equal(card[2],'Название объекта');
+  assert.deepEqual(card.slice(0,29),documents.slice(0,29));
 });
 test('115. creation writes object name and sync histories name changes', () => {
   const created=creationPrepareFixture(1); const headers=['ID документа','ID объекта','Название объекта','Тип документа','Номер договора','Статус документа','Статус объекта','Дата начала работ','Дата окончания (по плану)','Дата окончания (по факту)','Дата создания','Дата обновления','Кто обновил (email)','Ответственный прораб','ID ответственного прораба','Дата изменения статуса документа','Источник создания','Статус записи'];
@@ -1477,7 +1477,7 @@ test('129. web document preparation fills system/object fields and leaves busine
   const result=ctx.webAppPrepareDocument_({id:'15',name:'Объект',contractNumber:'D-1',objectStatus:'Действующий',workStartDate:now,workEndPlan:now,workEndFact:'',responsibleForeman:'Иванов',responsibleForemanId:'ST-1'},{id:'TYPE-1'},'Акт',3,'Подписан',facts,context,6,now,'actor','OP-1');
   const value=h=>result.row[headers.indexOf(h)];
   assert.equal(result.documentId,'DOC-15-0004'); assert.equal(value('ID типа документа'),'TYPE-1'); assert.equal(value('Тип документа'),'Акт');
-  assert.equal(value('Номер документа'),3); assert.equal(result.row.length,34);
+  assert.equal(value('Номер документа'),3); assert.equal(result.row.length,36);
   assert.equal(value('Статус записи'),'Активная'); assert.equal(value('Источник создания'),'Web-приложение'); assert.equal(value('Кто обновил (email)'),'actor');
   for(const h of ['Дата создания','Дата обновления','Дата изменения статуса документа']) assert.equal(Object.prototype.toString.call(value(h)),'[object Date]',h);
   for(const h of ['Дата документа','Оригинал / ЭДО','Комментарий','У кого документ','Где документ','Кто передал','Оплачен','Сумма документа','ГУ (Да/Нет)','Условия ГУ','ID сотрудника — у кого документ','ID сотрудника — кто передал','Отчётный период']) assert.equal(value(h),'',h);
@@ -1591,7 +1591,7 @@ test('145. v2 contracts separate canonical document type from document number', 
   assert.equal(vm.runInContext('H.CUSTOMER_SIGNING_RESPONSIBLE',ctx),'Кто ответственный за подписание (заказчик)');
   const documents=Array.from(vm.runInContext('SYSTEM_CONFIG.SHEETS.DOCUMENTS.requiredHeaders',ctx));
   assert.deepEqual(documents.slice(3,7),['Тип документа','Номер договора','Номер документа','Дата документа']);
-  assert.deepEqual(documents.slice(18,21),['Статус объекта','Ответственный прораб','Дата начала работ']);
+  assert.deepEqual(documents.slice(20,23),['Статус объекта','Ответственный прораб','Дата начала работ']);
   const map=Array.from(vm.runInContext('SYSTEM_CONFIG.CARD_FIELD_MAP',ctx));
   assert.equal(map.find(item=>item.cardHeader==='Тип документа').editable,false);
   assert.equal(map.find(item=>item.cardHeader==='Номер документа').editable,true);
@@ -2153,13 +2153,13 @@ test('246. output exposes exact formatting row plans',()=>{
   assert.deepEqual(output.metricValueRows,[6,10,14]);
   });
 
-test('211. client sheet contract has the exact nine contact headers', () => {
+test('211. client sheet contract has the exact ten contact headers', () => {
   const ctx=baseContext();
   const config=vm.runInContext('SYSTEM_CONFIG.SHEETS.CLIENTS',ctx);
   assert.equal(config.headerRow,4); assert.equal(config.dataStartRow,5);
   assert.deepEqual(Array.from(config.requiredHeaders),[
     'ID клиента','Наименование клиента','Название объекта','ФИО сотрудника','Должность',
-    'Электронная почта','Телефон','Комментарий','Статус клиента'
+    'Электронная почта','Телефон','Адрес клиента','Комментарий','Статус клиента'
   ]);
 });
 
@@ -2176,8 +2176,8 @@ test('213. client reader is header-driven and one row remains one contact', () =
     OBJECTS:operatorDictionaryContext(['ID объекта','Название объекта'],3,[]),
     EMPLOYEES:operatorDictionaryContext(['ID Сотрудника','ФИО сотрудника','Должность'],5,[]),
     CLIENTS:operatorDictionaryContext([
-      'Статус клиента','ФИО сотрудника','Название объекта','ID клиента','Наименование клиента'
-    ],5,[['Активный','Иванов','Объект А','CL-1','ООО А'],['Активный','Петров','Объект А','CL-2','ООО А']]),
+      'Статус клиента','ФИО сотрудника','Название объекта','ID клиента','Наименование клиента','Адрес клиента'
+    ],5,[['Активный','Иванов','Объект А','CL-1','ООО А','Адрес 1'],['Активный','Петров','Объект А','CL-2','ООО А','Адрес 2']]),
     DOCUMENT_TYPES:operatorDictionaryContext(['ID типа документа','Тип документа'],5,[]),
     CARD_DICTIONARY:operatorDictionaryContext(['Статус документа'],3,[])
   };
@@ -2190,8 +2190,8 @@ test('214. duplicate client contact IDs fail safely', () => {
   const ctx=baseContext();
   const empty=operatorDictionaryContext(['ID объекта','Название объекта'],3,[]);
   const contexts={OBJECTS:empty,EMPLOYEES:operatorDictionaryContext(['ID Сотрудника','ФИО сотрудника','Должность'],5,[]),
-    CLIENTS:operatorDictionaryContext(['ID клиента','Наименование клиента','Название объекта','ФИО сотрудника','Статус клиента'],5,[
-      ['CL-1','ООО А','А','Иванов','Активный'],['CL-1','ООО Б','Б','Петров','Активный']]),
+    CLIENTS:operatorDictionaryContext(['ID клиента','Наименование клиента','Название объекта','ФИО сотрудника','Адрес клиента','Статус клиента'],5,[
+      ['CL-1','ООО А','А','Иванов','Адрес А','Активный'],['CL-1','ООО Б','Б','Петров','Адрес Б','Активный']]),
     DOCUMENT_TYPES:operatorDictionaryContext(['ID типа документа','Тип документа'],5,[]),CARD_DICTIONARY:operatorDictionaryContext(['Статус документа'],3,[])};
   ctx.getSystemSheetContext_=key=>contexts[key];
   assert.throws(()=>ctx.operatorCardGetFilterData_(),/повторяется ID клиента/);
@@ -2339,6 +2339,220 @@ test('224. full save dictionaries also resolve and clear the object client signe
   fixture=partialSaveFixture(ctx,{fact:{'Кто ответственный за подписание (заказчик)':'Иванов — ООО А'},card:{'Кто ответственный за подписание (заказчик)':''}});
   plan=ctx.operatorCardBuildSavePlan_([fixture.card],[fixture.fact],dictionaries,new Date(),'a','OP-20260825-0001');
   assert.equal(plan.rowErrors.length,0); assert.equal(plan.rows[0].changes[0].newValue,'');
+});
+
+test('225. new documents use the preparation status', () => {
+  const ctx = baseContext();
+  assert.equal(vm.runInContext('SYSTEM_CONFIG.VALUES.INITIAL_DOCUMENT_STATUS', ctx), 'На подготовке');
+});
+
+test('226. facts and Operator Card expose exact 36/31 field contracts', () => {
+  const ctx = baseContext();
+  assert.equal(vm.runInContext('SYSTEM_CONFIG.SHEETS.DOCUMENTS.requiredHeaders', ctx).length, 36);
+  assert.equal(vm.runInContext('SYSTEM_CONFIG.SHEETS.OPERATOR_CARD.requiredHeaders', ctx).length, 31);
+  for (const key of ['DOCUMENTS', 'OPERATOR_CARD']) {
+    const headers = Array.from(vm.runInContext(`SYSTEM_CONFIG.SHEETS.${key}.requiredHeaders`, ctx));
+    assert.equal(headers.indexOf('Кто передал') + 1, headers.indexOf('Когда передан'));
+    assert.equal(headers.indexOf('Когда передан') + 1, headers.indexOf('Дней на реализацию'));
+  }
+});
+
+test('227. client, employee and workflow rule contracts are centralized', () => {
+  const ctx = baseContext();
+  assert.equal(vm.runInContext('SYSTEM_CONFIG.SHEETS.CLIENTS.requiredHeaders', ctx).length, 10);
+  assert.equal(vm.runInContext('SYSTEM_CONFIG.SHEETS.CLIENTS.requiredHeaders', ctx)[7], 'Адрес клиента');
+  assert.ok(Array.from(vm.runInContext('SYSTEM_CONFIG.SHEETS.EMPLOYEES.requiredHeaders', ctx)).includes('Участвует в документообороте'));
+  assert.deepEqual(Array.from(vm.runInContext('SYSTEM_CONFIG.SHEETS.WORKFLOW_RULES.requiredHeaders', ctx)),
+    ['ID правила','Тип документа','Статус документа','Где документ','Дней на реализацию','Действие','Активно']);
+});
+
+test('228. transferred-at accepts only blank or a valid Date', () => {
+  const ctx = baseContext();
+  assert.equal(ctx.isValidTransferredAt_(''), true);
+  assert.equal(vm.runInContext('isValidTransferredAt_(new Date(0))', ctx), true);
+  assert.equal(ctx.isValidTransferredAt_('29.08.2026'), false);
+  assert.equal(vm.runInContext('isValidTransferredAt_(new Date(NaN))', ctx), false);
+});
+
+test('229. implementation days validates blank, zero and positive integers', () => {
+  const ctx = baseContext();
+  assert.equal(ctx.isValidImplementationDays_(''), true);
+  assert.equal(ctx.isValidImplementationDays_(0), true);
+  assert.equal(ctx.isValidImplementationDays_(9), true);
+});
+
+test('230. implementation days rejects negative, fraction and text', () => {
+  const ctx = baseContext();
+  assert.equal(ctx.isValidImplementationDays_(-1), false);
+  assert.equal(ctx.isValidImplementationDays_(1.5), false);
+  assert.equal(ctx.isValidImplementationDays_('7'), false);
+});
+
+test('231. effective days priority is manual then rule then seven', () => {
+  const ctx = baseContext();
+  assert.equal(ctx.getEffectiveImplementationDays_(3, {implementationDays: 5}), 3);
+  assert.equal(ctx.getEffectiveImplementationDays_('', {implementationDays: 5}), 5);
+  assert.equal(ctx.getEffectiveImplementationDays_('', null), 7);
+  assert.equal(ctx.getEffectiveImplementationDays_(0, {implementationDays: 5}), 0);
+});
+
+test('232. effective-days fallback never mutates document data', () => {
+  const ctx = baseContext();
+  const document = { implementationDays: '' };
+  const before = JSON.stringify(document);
+  assert.equal(ctx.getEffectiveImplementationDays_(document.implementationDays, null), 7);
+  assert.equal(JSON.stringify(document), before);
+});
+
+function workflowPlanFixture(ctx, rows, options) {
+  const headers = ['ID документа','ID объекта','Статус документа','ID типа документа','Тип документа','Номер документа'];
+  const indexes = Object.fromEntries(headers.map((header, index) => [header, index]));
+  return ctx.buildDocumentWorkflowMigrationPlan_(rows, indexes, options, 4);
+}
+
+test('233. both legacy statuses migrate and unrelated rows stay unchanged', () => {
+  const ctx = baseContext();
+  const rows = [
+    ['D1','O1','Ожидает заполнения','T1','Акт','Акт №1'],
+    ['D2','O1','Передан заказчику','T2','Счёт','manual'],
+    ['D3','O1','Подписан у заказчика','T3','X','X']
+  ];
+  const plan = workflowPlanFixture(ctx, rows, {statuses:true});
+  assert.equal(plan.statusChanges, 2);
+  assert.equal(plan.rows.length, 2);
+  assert.ok(!plan.changes.some(change => change.sheetRow === 6));
+});
+
+test('234. status migration plan is idempotent', () => {
+  const ctx = baseContext();
+  const first = workflowPlanFixture(ctx, [['D1','O1','Ожидает заполнения','T1','X','X']], {statuses:true});
+  const second = workflowPlanFixture(ctx, [first.rows[0].row], {statuses:true});
+  assert.equal(second.changes.length, 0);
+});
+
+test('235. KS migration selects retained type ID and renames generated numbers', () => {
+  const ctx = baseContext();
+  const rows = [['D1','O1','X','KS2-ID','КС-2','КС-2 №12'], ['D2','O1','X','OTHER','КС-2','КС-2 №1']];
+  const plan = workflowPlanFixture(ctx, rows, {retainedTypeId:'KS2-ID', legacyTypeName:'КС-2'});
+  assert.equal(plan.typeChanges, 1); assert.equal(plan.numberChanges, 1);
+  assert.equal(plan.rows[0].row[4], 'КС2/КС3'); assert.equal(plan.rows[0].row[5], 'КС2/КС3 №12');
+  assert.ok(!plan.changes.some(change => change.sheetRow === 5));
+});
+
+test('236. KS migration preserves manually changed number', () => {
+  const ctx = baseContext();
+  const plan = workflowPlanFixture(ctx, [['D1','O1','X','KS2-ID','КС-2','Мой номер']], {retainedTypeId:'KS2-ID', legacyTypeName:'КС-2'});
+  assert.equal(plan.typeChanges, 1); assert.equal(plan.numberChanges, 0);
+  assert.equal(plan.rows[0].row[5], 'Мой номер');
+});
+
+test('237. KS migration is idempotent', () => {
+  const ctx = baseContext();
+  const options = {retainedTypeId:'KS2-ID', legacyTypeName:'КС-2'};
+  const first = workflowPlanFixture(ctx, [['D1','O1','X','KS2-ID','КС-2','КС-2 №1']], options);
+  const second = workflowPlanFixture(ctx, [first.rows[0].row], options);
+  assert.equal(second.changes.length, 0);
+});
+
+test('238. employee workflow flag is independent from generic active employee use', () => {
+  const ctx = baseContext();
+  assert.equal(ctx.isDocumentFlowEmployee_({active:true,participatesInDocumentFlow:'Да'}), true);
+  assert.equal(ctx.isDocumentFlowEmployee_({active:true,participatesInDocumentFlow:'Нет'}), false);
+  assert.equal(ctx.isDocumentFlowEmployee_({active:false,participatesInDocumentFlow:'Да'}), false);
+});
+
+test('239. workflow rule matching uses all three normalized conditions', () => {
+  const ctx = baseContext();
+  const rules = [{id:'R1',documentType:'Акт',documentStatus:'На подготовке',documentLocation:'Офис',implementationDays:4}];
+  assert.equal(ctx.findActiveDocumentWorkflowRule_(rules,{documentType:' Акт ',documentStatus:'на подготовке',documentLocation:'Офис'}).id,'R1');
+  assert.equal(ctx.findActiveDocumentWorkflowRule_(rules,{documentType:'Акт',documentStatus:'На подготовке',documentLocation:'Склад'}),null);
+});
+
+function workflowRulesReadFixture(rows, dataStartRow = 5) {
+  const ctx = baseContext();
+  const headers = ['ID правила','Тип документа','Статус документа','Где документ','Дней на реализацию','Действие','Активно'];
+  ctx.getSystemSheetContext_ = () => ({
+    headers,
+    headerMap: Object.fromEntries(headers.map((header, index) => [header, index + 1])),
+    config: {dataStartRow},
+    sheet: {
+      getLastRow: () => dataStartRow + rows.length - 1,
+      getRange: () => ({getValues: () => rows.map(row => row.slice())})
+    }
+  });
+  return ctx;
+}
+
+test('240. active-rule validation reports the original physical row after inactive rows', () => {
+  const ctx = workflowRulesReadFixture([
+    ['R-OFF','Акт','На подготовке','Офис',3,'','Нет'],
+    ['R-OFF-2','Акт','На подготовке','Офис',4,'','Нет'],
+    ['R-BAD','Акт','На подготовке','Офис','bad','','Да']
+  ], 5);
+  assert.throws(() => ctx.readActiveDocumentWorkflowRules_(), /row 7/);
+});
+
+test('241. duplicate active normalized conditions report every physical row and rule ID', () => {
+  const ctx = workflowRulesReadFixture([
+    ['R-1',' Акт ','На\u00a0  подготовке',' ОФИС ',3,'','Да'],
+    ['R-2','акт',' на подготовке ','офис',4,'','Да']
+  ], 5);
+  assert.throws(() => ctx.readActiveDocumentWorkflowRules_(), error => {
+    assert.match(error.message, /row 5/);
+    assert.match(error.message, /row 6/);
+    assert.match(error.message, /R-1/);
+    assert.match(error.message, /R-2/);
+    return true;
+  });
+});
+
+test('242. active plus inactive identical rules do not conflict', () => {
+  const ctx = workflowRulesReadFixture([
+    ['R-1','Акт','На подготовке','Офис',3,'','Нет'],
+    ['R-2','Акт','На подготовке','Офис',4,'','Да']
+  ]);
+  const rules = ctx.readActiveDocumentWorkflowRules_();
+  assert.equal(rules.length, 1);
+  assert.equal(rules[0].id, 'R-2');
+  assert.equal(rules[0].sheetRow, 6);
+});
+
+test('243. active rules differing in any condition remain unambiguous', () => {
+  const ctx = workflowRulesReadFixture([
+    ['R-1','Акт','На подготовке','Офис',3,'','Да'],
+    ['R-2','Акт','На подготовке','Склад',4,'','Да'],
+    ['R-3','Счёт','На подготовке','Офис',5,'','Да']
+  ]);
+  assert.equal(ctx.readActiveDocumentWorkflowRules_().length, 3);
+});
+
+test('244. reordering duplicate active rules never creates row priority', () => {
+  const first = ['R-1','Акт','На подготовке','Офис',3,'','Да'];
+  const second = ['R-2','Акт','На подготовке','Офис',4,'','Да'];
+  for (const rows of [[first, second], [second, first]]) {
+    assert.throws(
+      () => workflowRulesReadFixture(rows).readActiveDocumentWorkflowRules_(),
+      /Ambiguous active workflow rules/
+    );
+  }
+});
+
+test('245. common system validation requires the workflow-rules sheet', () => {
+  const ctx = baseContext();
+  const configs = vm.runInContext('SYSTEM_CONFIG.SHEETS', ctx);
+  const sheetFor = config => ({
+    getLastColumn: () => config.requiredHeaders.length,
+    getRange: () => ({getDisplayValues: () => [Array.from(config.requiredHeaders)]})
+  });
+  ctx.getSystemSpreadsheet_ = () => ({
+    getSheetByName(name) {
+      const key = Object.keys(configs).find(candidate => configs[candidate].name === name);
+      return key === 'WORKFLOW_RULES' ? null : sheetFor(configs[key]);
+    }
+  });
+  const result = ctx.runSystemStructureValidation_();
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some(error => /Справочник условий и действий/.test(error)));
 });
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);
