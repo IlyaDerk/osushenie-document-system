@@ -92,8 +92,14 @@ function operatorCardGetFilterData_() {
   ]));
   const employees = operatorCardReadDictionary_('EMPLOYEES', [
     { key: 'id', header: H.EMPLOYEE_ID }, { key: 'name', header: H.EMPLOYEE_NAME },
-    { key: 'position', header: H.EMPLOYEE_POSITION }
+    { key: 'position', header: H.EMPLOYEE_POSITION },
+    { key: 'dismissalDate', header: H.DISMISSAL_DATE },
+    { key: 'participatesInDocumentFlow', header: H.PARTICIPATES_IN_DOCUMENT_FLOW }
   ]).sort(function (a, b) { return operatorCardNaturalCompare_(a.name, b.name) || operatorCardNaturalCompare_(a.id, b.id); });
+  employees.forEach(function (employee) {
+    employee.active = !employee.dismissalDate;
+  });
+  const workflowEmployees = employees.filter(isDocumentFlowEmployee_);
   const clients = operatorCardReadDictionary_('CLIENTS', [
     { key: 'id', header: H.CLIENT_ID },
     { key: 'organizationName', header: H.CLIENT_NAME },
@@ -115,7 +121,7 @@ function operatorCardGetFilterData_() {
     }
     clientIds[client.id] = true;
   });
-  const holders = employees.map(function (x) { return { id: x.id, name: x.name, type: 'employee' }; }).concat(clients.map(function (x) { return { id: x.id, name: x.name, type: 'client' }; }));
+  const holders = workflowEmployees.map(function (x) { return { id: x.id, name: x.name, type: 'employee' }; });
   const documentTypes = operatorCardReadDictionary_('DOCUMENT_TYPES', [
     { key: 'id', header: H.DOCUMENT_TYPE_ID }, { key: 'name', header: H.DOCUMENT_TYPE }
   ]).sort(function (a, b) { return operatorCardNaturalCompare_(a.name, b.name) || operatorCardNaturalCompare_(a.id, b.id); });
@@ -129,7 +135,7 @@ function operatorCardGetFilterData_() {
         return operatorCardFold_(employee.position) === operatorCardFold_(position);
       });
     }),
-    employees: employees,
+    employees: workflowEmployees,
     clients: clients,
     holders: holders,
     documentTypes: documentTypes,
@@ -237,7 +243,6 @@ function operatorCardGetValidationData_(filterData) {
     { header: H.DOCUMENT_STATUS, values: operatorCardReadUniqueColumn_('CARD_DICTIONARY', H.DOCUMENT_STATUS) },
     { header: H.ORIGINAL_EDO, values: operatorCardReadUniqueColumn_('CARD_DICTIONARY', H.ORIGINAL_EDO) },
     { header: H.DOCUMENT_HOLDER, values: holderLabels },
-    { header: H.DOCUMENT_LOCATION, values: operatorCardReadUniqueColumn_('CARD_DICTIONARY', H.DOCUMENT_LOCATION) },
     { header: H.TRANSFERRED_BY, values: employeeLabels },
     { header: H.PAID, values: operatorCardReadUniqueColumn_('CARD_DICTIONARY', H.PAID) },
     { header: H.GU_FLAG, values: operatorCardReadUniqueColumn_('CARD_DICTIONARY', H.GU_FLAG) },
@@ -245,12 +250,18 @@ function operatorCardGetValidationData_(filterData) {
   ];
 }
 
+function operatorCardClientAddressesForObject_(clients, objectName) {
+  return operatorCardMergeUniqueValues_([operatorCardClientsForObject_(clients, objectName)
+    .map(function (client) { return client.address; })]);
+}
+
 /** Applies and clears object-specific validations with one batch write. */
 function operatorCardApplyRowValidations_(cardContext, cardRows, filterData) {
   if (!cardContext.sheet.getRange) return;
   const cardStartColumn = cardContext.headerMap[sysNormalizeHeader_(H.DOCUMENT_ID)];
   const objectOffset = cardContext.headerMap[sysNormalizeHeader_(H.OBJECT_NAME)] - cardStartColumn;
-  const firstColumn = cardContext.headerMap[sysNormalizeHeader_(H.TRANSFERRED_BY)];
+  const firstColumn = cardContext.headerMap[sysNormalizeHeader_(H.DOCUMENT_LOCATION)];
+  const transferredColumn = cardContext.headerMap[sysNormalizeHeader_(H.TRANSFERRED_BY)];
   const signerColumn = cardContext.headerMap[sysNormalizeHeader_(H.CUSTOMER_SIGNING_RESPONSIBLE)];
   const width = signerColumn - firstColumn + 1;
   const rowCount = cardContext.sheet.getMaxRows
@@ -258,6 +269,7 @@ function operatorCardApplyRowValidations_(cardContext, cardRows, filterData) {
   const employeeLabels = filterData.employees.map(function (employee) {
     return operatorCardDisplayLabel_(employee.name, employee.id);
   });
+  const systemLocations = operatorCardReadUniqueColumn_('CARD_DICTIONARY', H.DOCUMENT_LOCATION);
   const rules = Array.from({ length: rowCount }, function (_, rowIndex) {
     const output = Array(width).fill(null);
     if (rowIndex < cardRows.length) {
@@ -265,7 +277,13 @@ function operatorCardApplyRowValidations_(cardContext, cardRows, filterData) {
       const clients = operatorCardClientsForObject_(filterData.clients, row[objectOffset]);
       const clientLabels = clients.map(function (client) { return client.name; });
       const transferred = operatorCardMergeUniqueValues_([employeeLabels, clientLabels]);
-      output[0] = transferred.length ? SpreadsheetApp.newDataValidation()
+      const locations = operatorCardMergeUniqueValues_([
+        systemLocations,
+        operatorCardClientAddressesForObject_(filterData.clients, row[objectOffset])
+      ]);
+      output[0] = locations.length ? SpreadsheetApp.newDataValidation()
+        .requireValueInList(locations, true).setAllowInvalid(true).build() : null;
+      output[transferredColumn - firstColumn] = transferred.length ? SpreadsheetApp.newDataValidation()
         .requireValueInList(transferred, true).setAllowInvalid(true).build() : null;
       output[signerColumn - firstColumn] = clientLabels.length
         ? SpreadsheetApp.newDataValidation().requireValueInList(clientLabels, true)
@@ -387,9 +405,16 @@ function operatorCardPrepareRows_(rows, indexes, filters, dateRange, dataStartRo
     return true;
   });
   selected.sort(function (a, b) {
-    return operatorCardNaturalCompare_(a.row[indexes.objectId], b.row[indexes.objectId]) ||
-      operatorCardNaturalCompare_(a.row[indexes.documentTypeId], b.row[indexes.documentTypeId]) ||
-      operatorCardNaturalCompare_(a.row[indexes.documentId], b.row[indexes.documentId]) || a.sheetRow - b.sheetRow;
+    const leftDate = a.row[indexes.documentDate];
+    const rightDate = b.row[indexes.documentDate];
+    const dateCompare = leftDate instanceof Date && rightDate instanceof Date
+      ? leftDate.getTime() - rightDate.getTime()
+      : operatorCardNaturalCompare_(leftDate, rightDate);
+    return operatorCardNaturalCompare_(a.row[indexes.objectName], b.row[indexes.objectName]) ||
+      operatorCardNaturalCompare_(a.row[indexes.documentType], b.row[indexes.documentType]) ||
+      operatorCardNaturalCompare_(a.row[indexes.documentNumber], b.row[indexes.documentNumber]) ||
+      dateCompare || operatorCardNaturalCompare_(a.row[indexes.documentId], b.row[indexes.documentId]) ||
+      a.sheetRow - b.sheetRow;
   });
   const selectedDuplicateIds = {};
   selected.forEach(function (item) {
@@ -449,6 +474,8 @@ function operatorCardHandleReadOnlyEdit_(event) {
   const lastColumn = firstColumn + edit.getNumColumns() - 1;
   const readOnlyMappings = SYSTEM_CONFIG.CARD_FIELD_MAP.filter(function (mapping) {
     if (mapping.editable !== false) return false;
+    if (typeof OPERATOR_CARD_SAVE_WRITABLE_ !== 'undefined' &&
+        OPERATOR_CARD_SAVE_WRITABLE_.indexOf(mapping.cardHeader) !== -1) return false;
     const column = card.headerMap[sysNormalizeHeader_(mapping.cardHeader)];
     return column >= firstColumn && column <= lastColumn;
   });
@@ -560,7 +587,9 @@ function operatorCardApply_(rawFilters, suppressJournal) {
         documentId: index(H.DOCUMENT_ID), objectId: index(H.OBJECT_ID), documentTypeId: index(H.DOCUMENT_TYPE_ID),
         documentStatus: index(H.DOCUMENT_STATUS), holderId: index(H.HOLDER_EMPLOYEE_ID), foremanId: index(H.RESPONSIBLE_FOREMAN_ID),
         createdAt: index(H.CREATED_AT), recordStatus: index(H.RECORD_STATUS), transferredById: index(H.TRANSFERRED_BY_EMPLOYEE_ID),
-        documentHolder: index(H.DOCUMENT_HOLDER), transferredBy: index(H.TRANSFERRED_BY)
+        documentHolder: index(H.DOCUMENT_HOLDER), transferredBy: index(H.TRANSFERRED_BY),
+        objectName: index(H.OBJECT_NAME), documentType: index(H.DOCUMENT_TYPE),
+        documentNumber: index(H.DOCUMENT_NUMBER), documentDate: index(H.DOCUMENT_DATE)
       }, filters, range, documents.config.dataStartRow, documentsStartColumn - 1, dictionaries);
       result.loadedCount = result.cardRows.length;
       operatorCardReplace_(card, result.cardRows);

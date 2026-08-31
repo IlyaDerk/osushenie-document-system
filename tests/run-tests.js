@@ -676,9 +676,9 @@ test('55. active rows, combined ID filters and normalized status are applied', (
   const result = ctx.operatorCardPrepareRows_(rows,indexes,filters,{active:false},4);
   assert.equal(result.activeCount,1); assert.equal(result.rows.length,1); assert.equal(result.cardRows[0].length,31);
 });
-test('56. natural sorting uses object, type, document and physical row', () => {
-  const ctx = baseContext(); const i={documentId:0,objectId:1,documentTypeId:2,documentStatus:3,holderId:4,foremanId:5,createdAt:6,recordStatus:7,transferredById:30,documentHolder:9,transferredBy:11};
-  const rows=[['DOC-10','2','10','','','','','Активная'],['DOC-2','2','2','','','','','Активная'],['DOC-1','10','1','','','','','Активная']]; rows.forEach(r=>{while(r.length<31)r.push('')});
+test('56. natural sorting uses object name, type, number, date, ID and physical row', () => {
+  const ctx = baseContext(); const i={documentId:0,objectId:1,objectName:2,documentType:3,documentNumber:4,documentDate:5,documentTypeId:6,documentStatus:7,holderId:8,foremanId:9,createdAt:10,recordStatus:11,transferredById:30,documentHolder:12,transferredBy:13};
+  const rows=[['DOC-10','2','Дом 2','Акт','№10',new Date('2026-01-01'),'T1','', '', '', '', 'Активная'],['DOC-2','2','Дом 2','Акт','№2',new Date('2026-01-01'),'T1','','','','','Активная'],['DOC-1','10','Дом 10','Акт','№1',new Date('2026-01-01'),'T1','','','','','Активная']]; rows.forEach(r=>{while(r.length<31)r.push('')});
   const result=ctx.operatorCardPrepareRows_(rows,i,ctx.operatorCardNormalizeFilters_({}),{active:false},4);
   assert.deepEqual(Array.from(result.rows,x=>x.row[0]),['DOC-2','DOC-10','DOC-1']);
 });
@@ -896,8 +896,8 @@ test('71. filter data reads shifted real objects, test foremen, and unique card 
     OBJECTS: operatorDictionaryContext(['','ID объекта','Название объекта'], 3, [
       ['', '10', 'Дом 10'], ['', '2', 'Дом 2']
     ]),
-    EMPLOYEES: operatorDictionaryContext(['','ID Сотрудника','ФИО сотрудника','Должность'], 5, [
-      ['', 'E1', 'Иванов', '  гЛаВнЫй\u00a0 ИнЖеНеР '], ['', 'E2', 'Петров', 'Бухгалтер']
+    EMPLOYEES: operatorDictionaryContext(['','ID Сотрудника','ФИО сотрудника','Должность','Дата увольнения','Участвует в документообороте'], 5, [
+      ['', 'E1', 'Иванов', '  гЛаВнЫй\u00a0 ИнЖеНеР ', '', 'Да'], ['', 'E2', 'Петров', 'Бухгалтер', '', 'Нет']
     ]),
     CLIENTS: operatorDictionaryContext(['','ID клиента','Наименование клиента'], 5, []),
     DOCUMENT_TYPES: operatorDictionaryContext(['','ID типа документа','Тип документа'], 5, [
@@ -947,7 +947,7 @@ test('73. validation dictionaries use configured sources and preserve employee-b
   assert.deepEqual(byHeader['Статус документа'], ['Подписан']);
   assert.deepEqual(byHeader['Оригинал / ЭДО'], ['Оригинал','ЭДО']);
   assert.deepEqual(byHeader['У кого документ'], ['Сотрудник 1 [ST-1]','Сотрудник 2 [ST-2]','Клиент 1 [CL-1]']);
-  assert.deepEqual(byHeader['Где документ'], ['Мытищи']);
+  assert.equal(byHeader['Где документ'], undefined);
   assert.deepEqual(byHeader['Кто передал'], ['Сотрудник 1 [ST-1]','Сотрудник 2 [ST-2]']);
   assert.deepEqual(byHeader['Оплачен'], ['Оплачен']);
   assert.deepEqual(byHeader['ГУ (Да/Нет)'], ['Да','Нет']);
@@ -1037,9 +1037,9 @@ test('79. loader copies 25 fact fields then appends status and physical row', ()
   assert.match(text,/concat\(\[item\.row\[indexes\.recordStatus\], item\.sheetRow\]\)/);
   assert.match(text,/hideColumns\(cardStartColumn, 2\)/);
 });
-test('80. holder dictionary is employee then client and labels contain IDs', () => {
+test('80. holder dictionary is restricted to workflow employees and labels contain IDs', () => {
   const text=fs.readFileSync('OperatorCard.gs','utf8');
-  assert.match(text,/employees\.map[\s\S]*\.concat\(clients\.map/);
+  assert.match(text,/const holders = workflowEmployees\.map/);
   assert.equal(baseContext().operatorCardDisplayLabel_('ООО Ромашка','CL-0001'),'ООО Ромашка [CL-0001]');
 });
 test('81. save module preserves holder resolution and makes transfer polymorphic', () => {
@@ -2208,22 +2208,23 @@ test('215. active clients use strict normalized object equality without fuzzy ma
   assert.deepEqual(Array.from(ctx.operatorCardClientsForObject_(clients,'Объект'),x=>x.id),[]);
 });
 
-test('216. signer and transferred validations are built per document row in batches', () => {
+test('216. location, signer and transferred validations are built per document row in batches', () => {
   const ctx=baseContext(); const calls=[];
   ctx.SpreadsheetApp.newDataValidation=()=>{const state={};return {requireValueInList(v){state.values=Array.from(v);return this},setAllowInvalid(){return this},build(){return state}}};
-  const headerMap={'ID документа':1,'Название объекта':3,'Кто передал':13,'Кто ответственный за подписание (заказчик)':14};
+  const headerMap={'ID документа':1,'Название объекта':3,'Где документ':12,'Кто передал':13,'Кто ответственный за подписание (заказчик)':14};
   const sheet={getMaxRows:()=>8,getRange(row,column,count,width){return {setDataValidations(rules){calls.push({row,column,count,width,rules})}}}};
   const rows=[['D1','','Объект А'],['D2','','Объект Б']];
   const data={employees:[{id:'ST-1',name:'Сотрудник'}],clients:[
-    {id:'CL-1',name:'Иванов — ООО А',objectName:'Объект А',status:'Активный'},
-    {id:'CL-2',name:'Петров — ООО Б',objectName:'Объект Б',status:'Активный'},
+    {id:'CL-1',name:'Иванов — ООО А',objectName:'Объект А',address:'Адрес А',status:'Активный'},
+    {id:'CL-2',name:'Петров — ООО Б',objectName:'Объект Б',address:'Адрес Б',status:'Активный'},
     {id:'CL-3',name:'Неактивный — ООО А',objectName:'Объект А',status:'Неактивный'}]};
+  ctx.operatorCardReadUniqueColumn_=()=>['Офис'];
   ctx.operatorCardApplyRowValidations_({sheet,headerMap,config:{dataStartRow:6}},rows,data);
-  assert.equal(calls.length,1); assert.equal(calls[0].count,3); assert.equal(calls[0].width,2);
-  assert.deepEqual(calls[0].rules[0][0].values,['Сотрудник [ST-1]','Иванов — ООО А']);
-  assert.deepEqual(calls[0].rules[1][0].values,['Сотрудник [ST-1]','Петров — ООО Б']);
-  assert.deepEqual(calls[0].rules[0][1].values,['Иванов — ООО А']);
-  assert.deepEqual(calls[0].rules[2],[null,null]);
+  assert.equal(calls.length,1); assert.equal(calls[0].count,3); assert.equal(calls[0].width,3);
+  assert.deepEqual(calls[0].rules[0][0].values,['Офис','Адрес А']);
+  assert.deepEqual(calls[0].rules[0][1].values,['Сотрудник [ST-1]','Иванов — ООО А']);
+  assert.deepEqual(calls[0].rules[0][2].values,['Иванов — ООО А']);
+  assert.deepEqual(calls[0].rules[2],[null,null,null]);
 });
 
 test('217. transferred-by stores ST and CL IDs in the existing polymorphic column', () => {
@@ -2570,6 +2571,100 @@ test('245. common system validation requires the workflow-rules sheet', () => {
   const result = ctx.runSystemStructureValidation_();
   assert.equal(result.ok, false);
   assert.ok(result.errors.some(error => /Справочник условий и действий/.test(error)));
+});
+
+test('246. operator save loads, saves, clears and histories transferred-at as a Date', () => {
+  const ctx=baseContext(), dictionaries=partialDictionaries(), date=vm.runInContext("new Date('2026-08-29T00:00:00Z')",ctx);
+  let fixture=partialSaveFixture(ctx,{card:{'Когда передан':date}});
+  let plan=ctx.operatorCardBuildSavePlan_([fixture.card],[fixture.fact],dictionaries,new Date(),'a','OP-20260831-0001');
+  assert.equal(plan.rowErrors.length,0,JSON.stringify(plan.rowErrors)); assert.equal(plan.changes[0].fieldName,'Когда передан'); assert.equal(plan.changes[0].newValue,date);
+  fixture=partialSaveFixture(ctx,{fact:{'Когда передан':date},card:{'Когда передан':''}});
+  plan=ctx.operatorCardBuildSavePlan_([fixture.card],[fixture.fact],dictionaries,new Date(),'a','OP-20260831-0001');
+  assert.equal(plan.changes[0].newValue,'');
+  fixture=partialSaveFixture(ctx,{card:{'Когда передан':'2026-08-29'}});
+  plan=ctx.operatorCardBuildSavePlan_([fixture.card],[fixture.fact],dictionaries,new Date(),'a','OP-20260831-0001');
+  assert.match(plan.rowErrors[0].message,/корректной датой/);
+});
+
+test('247. implementation-days operator value accepts blank, zero and integers but rejects unsafe values', () => {
+  const ctx=baseContext(), dictionaries=partialDictionaries();
+  for (const value of ['',0,12]) {
+    const fixture=partialSaveFixture(ctx,{fact:{'Дней на реализацию':5},card:{'Дней на реализацию':value}});
+    const plan=ctx.operatorCardBuildSavePlan_([fixture.card],[fixture.fact],dictionaries,new Date(),'a','OP-20260831-0001');
+    assert.equal(plan.rowErrors.length,0,String(value)+JSON.stringify(plan.rowErrors)); assert.equal(plan.changes[0].newValue,value);
+  }
+  for (const value of [-1,1.5,'7',NaN,Infinity]) {
+    const fixture=partialSaveFixture(ctx,{card:{'Дней на реализацию':value}});
+    const plan=ctx.operatorCardBuildSavePlan_([fixture.card],[fixture.fact],dictionaries,new Date(),'a','OP-20260831-0001');
+    assert.equal(plan.rows.length,0,String(value)); assert.match(plan.rowErrors[0].message,/целым неотрицательным/);
+  }
+});
+
+test('248. client locations normalize, deduplicate and remain object-specific', () => {
+  const ctx=baseContext();
+  const clients=[
+    {objectName:' Объект\u00a0А ',address:' Москва,  ул. Первая, 10 ',status:'Активный'},
+    {objectName:'объект а',address:'Москва, ул. Первая, 10',status:'Активный'},
+    {objectName:'Объект Б',address:'Москва, ул. Вторая, 20',status:'Активный'},
+    {objectName:'Объект А',address:'Неактивный адрес',status:'Неактивный'}
+  ];
+  assert.deepEqual(Array.from(ctx.operatorCardClientAddressesForObject_(clients,'Объект А')),['Москва, ул. Первая, 10']);
+});
+
+test('249. location save accepts system/current-object values and preserves unchanged history only', () => {
+  const ctx=baseContext(), dictionaries=partialDictionaries();
+  dictionaries.clients=[
+    {objectName:'Объект Альфа',address:'Адрес Альфа',status:'Активный'},
+    {objectName:'Другой объект',address:'Чужой адрес',status:'Активный'},
+    {objectName:'Объект Альфа',address:'Старый адрес',status:'Неактивный'}
+  ];
+  for (const value of ['Архив','Адрес Альфа']) {
+    const fixture=partialSaveFixture(ctx,{card:{'Где документ':value}});
+    const plan=ctx.operatorCardBuildSavePlan_([fixture.card],[fixture.fact],dictionaries,new Date(),'a','OP-20260831-0001');
+    assert.equal(plan.rowErrors.length,0,value);
+  }
+  for (const value of ['Чужой адрес','Старый адрес','Произвольный']) {
+    const fixture=partialSaveFixture(ctx,{card:{'Где документ':value}});
+    const plan=ctx.operatorCardBuildSavePlan_([fixture.card],[fixture.fact],dictionaries,new Date(),'a','OP-20260831-0001');
+    assert.match(plan.rowErrors[0].message,/неизвестное значение/,value);
+  }
+  let fixture=partialSaveFixture(ctx,{fact:{'Где документ':'Историческое'},card:{'Где документ':'Историческое','Комментарий':'new'}});
+  let plan=ctx.operatorCardBuildSavePlan_([fixture.card],[fixture.fact],dictionaries,new Date(),'a','OP-20260831-0001');
+  assert.equal(plan.rowErrors.length,0); assert.deepEqual(Array.from(plan.changes,x=>x.fieldName),['Комментарий']);
+  fixture=partialSaveFixture(ctx,{fact:{'Где документ':'Историческое'},card:{'Где документ':'Новое недопустимое'}});
+  plan=ctx.operatorCardBuildSavePlan_([fixture.card],[fixture.fact],dictionaries,new Date(),'a','OP-20260831-0001');
+  assert.match(plan.rowErrors[0].message,/неизвестное значение/);
+});
+
+test('250. workflow employees drive holder and transfer choices while foremen stay independent', () => {
+  const ctx=baseContext();
+  const employees=[
+    {id:'ST-1',name:'Да',active:true,participatesInDocumentFlow:'Да',position:'Главный инженер'},
+    {id:'ST-2',name:'Нет',active:true,participatesInDocumentFlow:'Нет',position:'Главный инженер'},
+    {id:'ST-3',name:'Уволен',active:false,participatesInDocumentFlow:'Да',position:'Главный инженер'}
+  ];
+  const workflow=employees.filter(ctx.isDocumentFlowEmployee_);
+  assert.deepEqual(Array.from(workflow,x=>x.id),['ST-1']);
+  assert.deepEqual(Array.from(employees.filter(x=>['Главный инженер'].includes(x.position)),x=>x.id),['ST-1','ST-2','ST-3']);
+  ctx.operatorCardReadUniqueColumn_=()=>[];
+  const validation=ctx.operatorCardGetValidationData_({employees:workflow,holders:workflow});
+  const byHeader=Object.fromEntries(Array.from(validation,x=>[x.header,Array.from(x.values)]));
+  assert.deepEqual(byHeader['У кого документ'],['Да [ST-1]']); assert.deepEqual(byHeader['Кто передал'],['Да [ST-1]']);
+});
+
+test('251. operator sorting follows every documented tie-breaker', () => {
+  const ctx=baseContext();
+  const i={documentId:0,objectId:1,objectName:2,documentType:3,documentNumber:4,documentDate:5,documentTypeId:6,documentStatus:7,holderId:8,foremanId:9,createdAt:10,recordStatus:11,documentHolder:12,transferredBy:13,transferredById:14};
+  const d1=vm.runInContext("new Date('2026-01-01')",ctx), d2=vm.runInContext("new Date('2026-01-02')",ctx);
+  const rows=[
+    ['D-10','O','Б','Акт','КС2/КС3 №10',d1,'T','','','','','Активная'],
+    ['D-3','O','А','Счёт','№1',d1,'T','','','','','Активная'],
+    ['D-2','O','А','Акт','КС2/КС3 №2',d2,'T','','','','','Активная'],
+    ['D-1','O','А','Акт','КС2/КС3 №2',d1,'T','','','','','Активная'],
+    ['D-0','O','А','Акт','КС2/КС3 №2',d1,'T','','','','','Активная']
+  ]; rows.forEach(row=>{while(row.length<31)row.push('')});
+  const result=ctx.operatorCardPrepareRows_(rows,i,ctx.operatorCardNormalizeFilters_({}),{active:false},4,0,{});
+  assert.deepEqual(Array.from(result.rows,x=>x.row[0]),['D-0','D-1','D-2','D-3','D-10']);
 });
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);

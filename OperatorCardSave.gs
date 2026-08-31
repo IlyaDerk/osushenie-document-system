@@ -2,6 +2,7 @@
 const OPERATOR_CARD_SAVE_WRITABLE_ = [
   H.DOCUMENT_NUMBER, H.DOCUMENT_DATE, H.DOCUMENT_STATUS, H.ORIGINAL_EDO, H.COMMENT,
   H.DOCUMENT_HOLDER, H.DOCUMENT_LOCATION, H.TRANSFERRED_BY, H.PAID,
+  H.TRANSFERRED_AT, H.IMPLEMENTATION_DAYS,
   H.CUSTOMER_SIGNING_RESPONSIBLE, H.DOCUMENT_AMOUNT, H.GU_FLAG, H.GU_TERMS,
   H.WORK_START_DATE, H.WORK_END_PLAN, H.WORK_END_FACT,
   H.RECORD_STATUS
@@ -88,7 +89,7 @@ function operatorCardSaveProposeRow_(card, fact, dictionaries) {
 
   OPERATOR_CARD_SAVE_WRITABLE_.forEach(function (header) {
     let value = card.values[header];
-    if ([H.DOCUMENT_DATE, H.WORK_START_DATE, H.WORK_END_PLAN, H.WORK_END_FACT]
+    if ([H.DOCUMENT_DATE, H.TRANSFERRED_AT, H.WORK_START_DATE, H.WORK_END_PLAN, H.WORK_END_FACT]
         .indexOf(header) !== -1 && !operatorCardSaveEmpty_(value) &&
         (!(value instanceof Date) || isNaN(value.getTime()))) {
       throw new Error('Поле «' + header + '» должно быть пустым или корректной датой.');
@@ -97,7 +98,19 @@ function operatorCardSaveProposeRow_(card, fact, dictionaries) {
         (typeof value !== 'number' || !isFinite(value))) {
       throw new Error('Поле «' + header + '» должно быть пустым или числом.');
     }
-    if (dictionaryHeaders.indexOf(header) !== -1) {
+    if (header === H.IMPLEMENTATION_DAYS && !isValidImplementationDays_(value)) {
+      throw new Error('Поле «' + header + '» должно быть пустым или целым неотрицательным числом.');
+    }
+    if (header === H.DOCUMENT_LOCATION) {
+      const allowedLocations = operatorCardMergeUniqueValues_([
+        dictionaries.card[H.DOCUMENT_LOCATION] || [],
+        operatorCardClientAddressesForObject_(dictionaries.clients, fact.values[H.OBJECT_NAME])
+      ]);
+      if (value !== fact.values[H.DOCUMENT_LOCATION]) {
+        operatorCardSaveAssertDictionary_(value, allowedLocations, header);
+      }
+    }
+    if (dictionaryHeaders.indexOf(header) !== -1 && header !== H.DOCUMENT_LOCATION) {
       operatorCardSaveAssertDictionary_(value, dictionaries.card[header] || [], header);
     }
     if (header === H.DOCUMENT_HOLDER) {
@@ -194,6 +207,7 @@ function operatorCardBuildSavePlan_(cardItems, factItems, dictionaries, now, ema
       });
       const changedReadOnlyHeaders = SYSTEM_CONFIG.CARD_FIELD_MAP.filter(function (mapping) {
         return !mapping.editable && !mapping.technical &&
+          OPERATOR_CARD_SAVE_WRITABLE_.indexOf(mapping.cardHeader) === -1 &&
           mapping.cardHeader !== H.UPDATED_AT && mapping.cardHeader !== H.UPDATED_BY_EMAIL &&
           !operatorCardSaveEqual_(card.values[mapping.cardHeader], fact.values[mapping.factHeader]);
       }).map(function (mapping) {
