@@ -47,7 +47,11 @@ it does not constrain foremen or Web users and does not change ST/CL IDs.
 `Справочник условий и действий` has headers at row 4 and data from row 5:
 `ID правила`, `Тип документа`, `Статус документа`, `Где документ`, `Дней на
 реализацию`, `Действие`, `Активно`. The reader returns only active (`Да`) rules
-and rejects an invalid active rule deadline.
+and rejects an invalid active rule deadline. This is a mandatory system sheet:
+the common `validateSystemStructure()` check requires both the sheet and its
+exact `WORKFLOW_RULES` header contract even when it contains no data rows. The
+code does not create the sheet or change its visibility; the owner hides it
+manually in the working spreadsheet.
 
 ## Validation and future deadline calculation
 
@@ -70,8 +74,9 @@ Before deploying code or running migrations on a copy, the owner must:
 2. add `Адрес клиента` after `Телефон` on `Справочник клиентов`;
 3. add `Участвует в документообороте` on `Справочник сотрудников` and fill
    every applicable row with `Да` or `Нет`;
-4. create `Справочник условий и действий` with its seven exact headers if rules
-   will be maintained;
+4. obligatorily create `Справочник условий и действий` with its seven exact
+   headers before installing or running the new code, even if it initially has
+   no rules; hide the sheet manually for ordinary users if required;
 5. add `На подготовке`, `На согласовании у заказчика`, and `Подписан у
    заказчика` as required on `Справочник для КО`, retaining any legacy values
    until the status migration has run;

@@ -2468,4 +2468,91 @@ test('239. workflow rule matching uses all three normalized conditions', () => {
   assert.equal(ctx.findActiveDocumentWorkflowRule_(rules,{documentType:'Акт',documentStatus:'На подготовке',documentLocation:'Склад'}),null);
 });
 
+function workflowRulesReadFixture(rows, dataStartRow = 5) {
+  const ctx = baseContext();
+  const headers = ['ID правила','Тип документа','Статус документа','Где документ','Дней на реализацию','Действие','Активно'];
+  ctx.getSystemSheetContext_ = () => ({
+    headers,
+    headerMap: Object.fromEntries(headers.map((header, index) => [header, index + 1])),
+    config: {dataStartRow},
+    sheet: {
+      getLastRow: () => dataStartRow + rows.length - 1,
+      getRange: () => ({getValues: () => rows.map(row => row.slice())})
+    }
+  });
+  return ctx;
+}
+
+test('240. active-rule validation reports the original physical row after inactive rows', () => {
+  const ctx = workflowRulesReadFixture([
+    ['R-OFF','Акт','На подготовке','Офис',3,'','Нет'],
+    ['R-OFF-2','Акт','На подготовке','Офис',4,'','Нет'],
+    ['R-BAD','Акт','На подготовке','Офис','bad','','Да']
+  ], 5);
+  assert.throws(() => ctx.readActiveDocumentWorkflowRules_(), /row 7/);
+});
+
+test('241. duplicate active normalized conditions report every physical row and rule ID', () => {
+  const ctx = workflowRulesReadFixture([
+    ['R-1',' Акт ','На\u00a0  подготовке',' ОФИС ',3,'','Да'],
+    ['R-2','акт',' на подготовке ','офис',4,'','Да']
+  ], 5);
+  assert.throws(() => ctx.readActiveDocumentWorkflowRules_(), error => {
+    assert.match(error.message, /row 5/);
+    assert.match(error.message, /row 6/);
+    assert.match(error.message, /R-1/);
+    assert.match(error.message, /R-2/);
+    return true;
+  });
+});
+
+test('242. active plus inactive identical rules do not conflict', () => {
+  const ctx = workflowRulesReadFixture([
+    ['R-1','Акт','На подготовке','Офис',3,'','Нет'],
+    ['R-2','Акт','На подготовке','Офис',4,'','Да']
+  ]);
+  const rules = ctx.readActiveDocumentWorkflowRules_();
+  assert.equal(rules.length, 1);
+  assert.equal(rules[0].id, 'R-2');
+  assert.equal(rules[0].sheetRow, 6);
+});
+
+test('243. active rules differing in any condition remain unambiguous', () => {
+  const ctx = workflowRulesReadFixture([
+    ['R-1','Акт','На подготовке','Офис',3,'','Да'],
+    ['R-2','Акт','На подготовке','Склад',4,'','Да'],
+    ['R-3','Счёт','На подготовке','Офис',5,'','Да']
+  ]);
+  assert.equal(ctx.readActiveDocumentWorkflowRules_().length, 3);
+});
+
+test('244. reordering duplicate active rules never creates row priority', () => {
+  const first = ['R-1','Акт','На подготовке','Офис',3,'','Да'];
+  const second = ['R-2','Акт','На подготовке','Офис',4,'','Да'];
+  for (const rows of [[first, second], [second, first]]) {
+    assert.throws(
+      () => workflowRulesReadFixture(rows).readActiveDocumentWorkflowRules_(),
+      /Ambiguous active workflow rules/
+    );
+  }
+});
+
+test('245. common system validation requires the workflow-rules sheet', () => {
+  const ctx = baseContext();
+  const configs = vm.runInContext('SYSTEM_CONFIG.SHEETS', ctx);
+  const sheetFor = config => ({
+    getLastColumn: () => config.requiredHeaders.length,
+    getRange: () => ({getDisplayValues: () => [Array.from(config.requiredHeaders)]})
+  });
+  ctx.getSystemSpreadsheet_ = () => ({
+    getSheetByName(name) {
+      const key = Object.keys(configs).find(candidate => configs[candidate].name === name);
+      return key === 'WORKFLOW_RULES' ? null : sheetFor(configs[key]);
+    }
+  });
+  const result = ctx.runSystemStructureValidation_();
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some(error => /Справочник условий и действий/.test(error)));
+});
+
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);

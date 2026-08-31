@@ -55,6 +55,17 @@ function isDocumentFlowEmployee_(employee) {
       sysNormalizeHeader_(SYSTEM_CONFIG.VALUES.DOCUMENT_FLOW_YES);
 }
 
+function documentWorkflowNormalizedConditions_(value) {
+  const fold = function (condition) {
+    return sysNormalizeHeader_(condition).toLocaleLowerCase('ru');
+  };
+  return [
+    fold(value.documentType),
+    fold(value.documentStatus),
+    fold(value.documentLocation)
+  ];
+}
+
 /** Header-driven reader. Invalid active rules fail closed instead of being guessed. */
 function readActiveDocumentWorkflowRules_() {
   const context = getSystemSheetContext_('WORKFLOW_RULES');
@@ -66,15 +77,21 @@ function readActiveDocumentWorkflowRules_() {
   const column = function (header) {
     return context.headerMap[sysNormalizeHeader_(header)] - 1;
   };
-  return rows.filter(function (row) {
-    return sysNormalizeHeader_(row[column(H.ACTIVE)]) ===
+  const activeRules = rows.map(function (row, offset) {
+    return {
+      row: row,
+      sheetRow: context.config.dataStartRow + offset
+    };
+  }).filter(function (item) {
+    return sysNormalizeHeader_(item.row[column(H.ACTIVE)]) ===
       sysNormalizeHeader_(SYSTEM_CONFIG.VALUES.ACTIVE_RULE);
-  }).map(function (row, offset) {
+  }).map(function (item) {
+    const row = item.row;
     const days = row[column(H.IMPLEMENTATION_DAYS)];
     if (!isValidImplementationDays_(days) || documentWorkflowIsBlank_(days)) {
       throw new Error(
         'Invalid «' + H.IMPLEMENTATION_DAYS + '» in active rule at row ' +
-        (context.config.dataStartRow + offset) + '.'
+        item.sheetRow + '.'
       );
     }
     return {
@@ -83,19 +100,41 @@ function readActiveDocumentWorkflowRules_() {
       documentStatus: String(row[column(H.DOCUMENT_STATUS)] || '').trim(),
       documentLocation: String(row[column(H.DOCUMENT_LOCATION)] || '').trim(),
       implementationDays: days,
-      action: String(row[column(H.ACTION)] || '').trim()
+      action: String(row[column(H.ACTION)] || '').trim(),
+      sheetRow: item.sheetRow
     };
   });
+
+  const rulesByConditions = {};
+  activeRules.forEach(function (rule) {
+    const key = JSON.stringify(documentWorkflowNormalizedConditions_(rule));
+    if (!rulesByConditions[key]) rulesByConditions[key] = [];
+    rulesByConditions[key].push(rule);
+  });
+  const conflicts = Object.keys(rulesByConditions).filter(function (key) {
+    return rulesByConditions[key].length > 1;
+  });
+  if (conflicts.length) {
+    const details = conflicts.map(function (key) {
+      return rulesByConditions[key].map(function (rule) {
+        return 'row ' + rule.sheetRow + (rule.id ? ' (ID «' + rule.id + '»)' : '');
+      }).join(', ');
+    });
+    throw new Error(
+      'Ambiguous active workflow rules with identical conditions: ' +
+      details.join('; ') + '.'
+    );
+  }
+  return activeRules;
 }
 
 function findActiveDocumentWorkflowRule_(rules, document) {
-  const fold = function (value) {
-    return sysNormalizeHeader_(value).toLocaleLowerCase('ru');
-  };
+  const expected = documentWorkflowNormalizedConditions_(document);
   return (rules || []).filter(function (rule) {
-    return fold(rule.documentType) === fold(document.documentType) &&
-      fold(rule.documentStatus) === fold(document.documentStatus) &&
-      fold(rule.documentLocation) === fold(document.documentLocation);
+    const actual = documentWorkflowNormalizedConditions_(rule);
+    return actual.every(function (value, index) {
+      return value === expected[index];
+    });
   })[0] || null;
 }
 
