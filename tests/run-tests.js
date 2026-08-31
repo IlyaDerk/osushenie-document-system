@@ -2537,6 +2537,23 @@ test('244. reordering duplicate active rules never creates row priority', () => 
   }
 });
 
+test('244a. blank conditions use the same normalization for matching and duplicates', () => {
+  const rows = [
+    ['R-BLANK-1','Акт','','\u00a0',3,'','Да'],
+    ['R-BLANK-2',' акт ','   ','',4,'','Да']
+  ];
+  const ctx = workflowRulesReadFixture(rows);
+  assert.throws(() => ctx.readActiveDocumentWorkflowRules_(), error => {
+    assert.match(error.message, /row 5/);
+    assert.match(error.message, /row 6/);
+    return true;
+  });
+  const matched = ctx.findActiveDocumentWorkflowRule_([
+    {id:'R-BLANK',documentType:' Акт ',documentStatus:'\u00a0',documentLocation:''}
+  ], {documentType:'акт',documentStatus:'',documentLocation:'   '});
+  assert.equal(matched.id, 'R-BLANK');
+});
+
 test('245. common system validation requires the workflow-rules sheet', () => {
   const ctx = baseContext();
   const configs = vm.runInContext('SYSTEM_CONFIG.SHEETS', ctx);
