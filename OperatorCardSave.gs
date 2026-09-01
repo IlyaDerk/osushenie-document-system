@@ -150,9 +150,7 @@ function operatorCardSaveProposeRow_(card, fact, dictionaries) {
       } else if (value === fact.values[H.CUSTOMER_SIGNING_RESPONSIBLE]) {
         value = fact.values[H.CUSTOMER_SIGNING_RESPONSIBLE];
       } else {
-        const client = operatorCardSaveResolveUnique_(clientMap, value, header);
-        if (!client) throw new Error('Поле «' + header + '»: выберите контакт клиента текущего объекта.');
-        value = client.name;
+        value = operatorCardNormalizeText_(value);
       }
     }
     proposed[header] = value;
