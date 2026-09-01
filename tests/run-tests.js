@@ -2265,6 +2265,26 @@ test('220. signer selection saves, clears, and enters ordinary change history pl
   assert.equal(plan.changes[0].newValue,'');
 });
 
+test('220a. signer accepts normalized manual text without a directory contact', () => {
+  const ctx=baseContext(); const dictionaries=partialDictionaries();
+  const header='Кто ответственный за подписание (заказчик)';
+  const fixture=partialSaveFixture(ctx,{card:{[header]:'  Петров Пётр Петрович  '}});
+  const plan=ctx.operatorCardBuildSavePlan_(
+    [fixture.card],[fixture.fact],dictionaries,new Date(),'a','OP-20260901-0001'
+  );
+  assert.equal(plan.rowErrors.length,0);
+  assert.equal(plan.rows.length,1);
+  assert.deepEqual(Array.from(plan.changes,x=>[x.fieldName,x.newValue]),[
+    [header,'Петров Пётр Петрович']
+  ]);
+
+  const transferred=partialSaveFixture(ctx,{card:{'Кто передал':'Петров Пётр Петрович'}});
+  assert.throws(
+    ()=>ctx.operatorCardSaveProposeRow_(transferred.card,transferred.fact,dictionaries),
+    /должен быть выбран из актуальных справочников/
+  );
+});
+
 test('221. Web document types are dynamic and accept rename/removal without code changes', () => {
   const ctx=baseContext(); const headers=['ID типа документа','Тип документа','Повторяемость']; let rows=[['T1','Старое имя','Один'],['T2','Удаляемый','Много']];
   ctx.getSystemSheetContext_=()=>({headers,headerMap:{'ID типа документа':1,'Тип документа':2,'Повторяемость':3},config:{dataStartRow:5},sheet:{getLastRow:()=>4+rows.length,getRange:()=>({getValues:()=>rows})}});
