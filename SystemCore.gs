@@ -129,6 +129,7 @@ const SYSTEM_HEADERS = Object.freeze({
   // Справочник условий и действий
   RULE_ID: 'ID правила',
   ACTION: 'Действие',
+  NOTIFY: 'Уведомлять',
   ACTIVE: 'Активно',
 
   // Справочник типов документов
@@ -463,6 +464,7 @@ const SYSTEM_CONFIG = {
         H.DOCUMENT_LOCATION,
         H.IMPLEMENTATION_DAYS,
         H.ACTION,
+        H.NOTIFY,
         H.ACTIVE
       ]
     },

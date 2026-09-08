@@ -3,7 +3,7 @@ const assert = require('assert');
 const fs = require('fs');
 const vm = require('vm');
 const cp = require('child_process');
-const files = ['SystemCore.gs', 'DocumentArchitectureCore.gs', 'CreateObjectDocuments.gs', 'SyncObjectData.gs', 'ArchiveChangeHistory.gs', 'DocumentWorkflowSchema.gs', 'OperatorCard.gs', 'OperatorCardSave.gs', 'ObjectSheetControls.gs', 'Code.gs', 'WebAppAuth.gs', 'DocumentWebAppServer.gs', 'DocumentArchitectureV2Migration.gs', 'ObjectCardReport.gs', 'ManagerSummaryReport.gs'];
+const files = ['SystemCore.gs', 'DocumentArchitectureCore.gs', 'CreateObjectDocuments.gs', 'SyncObjectData.gs', 'ArchiveChangeHistory.gs', 'DocumentWorkflowSchema.gs', 'WorkflowNotifications.gs', 'OperatorCard.gs', 'OperatorCardSave.gs', 'ObjectSheetControls.gs', 'Code.gs', 'WebAppAuth.gs', 'DocumentWebAppServer.gs', 'DocumentArchitectureV2Migration.gs', 'ObjectCardReport.gs', 'ManagerSummaryReport.gs'];
 const source = files.map(f => fs.readFileSync(f, 'utf8')).join('\n');
 let passed = 0;
 function test(name, fn) {
@@ -2384,7 +2384,7 @@ test('227. client, employee and workflow rule contracts are centralized', () => 
   assert.equal(vm.runInContext('SYSTEM_CONFIG.SHEETS.CLIENTS.requiredHeaders', ctx)[7], 'Адрес клиента');
   assert.ok(Array.from(vm.runInContext('SYSTEM_CONFIG.SHEETS.EMPLOYEES.requiredHeaders', ctx)).includes('Участвует в документообороте'));
   assert.deepEqual(Array.from(vm.runInContext('SYSTEM_CONFIG.SHEETS.WORKFLOW_RULES.requiredHeaders', ctx)),
-    ['ID правила','Тип документа','Статус документа','Где документ','Дней на реализацию','Действие','Активно']);
+    ['ID правила','Тип документа','Статус документа','Где документ','Дней на реализацию','Действие','Уведомлять','Активно']);
 });
 
 test('228. transferred-at accepts only blank or a valid Date', () => {
@@ -2491,7 +2491,7 @@ test('239. workflow rule matching uses all three normalized conditions', () => {
 
 function workflowRulesReadFixture(rows, dataStartRow = 5) {
   const ctx = baseContext();
-  const headers = ['ID правила','Тип документа','Статус документа','Где документ','Дней на реализацию','Действие','Активно'];
+  const headers = ['ID правила','Тип документа','Статус документа','Где документ','Дней на реализацию','Действие','Уведомлять','Активно'];
   ctx.getSystemSheetContext_ = () => ({
     headers,
     headerMap: Object.fromEntries(headers.map((header, index) => [header, index + 1])),
@@ -2506,17 +2506,17 @@ function workflowRulesReadFixture(rows, dataStartRow = 5) {
 
 test('240. active-rule validation reports the original physical row after inactive rows', () => {
   const ctx = workflowRulesReadFixture([
-    ['R-OFF','Акт','На подготовке','Офис',3,'','Нет'],
-    ['R-OFF-2','Акт','На подготовке','Офис',4,'','Нет'],
-    ['R-BAD','Акт','На подготовке','Офис','bad','','Да']
+    ['R-OFF','Акт','На подготовке','Офис',3,'','bad','Нет'],
+    ['R-OFF-2','Акт','На подготовке','Офис',4,'','bad','Нет'],
+    ['R-BAD','Акт','На подготовке','Офис','bad','','Да','Да']
   ], 5);
   assert.throws(() => ctx.readActiveDocumentWorkflowRules_(), /row 7/);
 });
 
 test('241. duplicate active normalized conditions report every physical row and rule ID', () => {
   const ctx = workflowRulesReadFixture([
-    ['R-1',' Акт ','На\u00a0  подготовке',' ОФИС ',3,'','Да'],
-    ['R-2','акт',' на подготовке ','офис',4,'','Да']
+    ['R-1',' Акт ','На\u00a0  подготовке',' ОФИС ',3,'','Да','Да'],
+    ['R-2','акт',' на подготовке ','офис',4,'','Да','Да']
   ], 5);
   assert.throws(() => ctx.readActiveDocumentWorkflowRules_(), error => {
     assert.match(error.message, /row 5/);
@@ -2529,8 +2529,8 @@ test('241. duplicate active normalized conditions report every physical row and 
 
 test('242. active plus inactive identical rules do not conflict', () => {
   const ctx = workflowRulesReadFixture([
-    ['R-1','Акт','На подготовке','Офис',3,'','Нет'],
-    ['R-2','Акт','На подготовке','Офис',4,'','Да']
+    ['R-1','Акт','На подготовке','Офис',3,'','Да','Нет'],
+    ['R-2','Акт','На подготовке','Офис',4,'','Да','Да']
   ]);
   const rules = ctx.readActiveDocumentWorkflowRules_();
   assert.equal(rules.length, 1);
@@ -2540,16 +2540,16 @@ test('242. active plus inactive identical rules do not conflict', () => {
 
 test('243. active rules differing in any condition remain unambiguous', () => {
   const ctx = workflowRulesReadFixture([
-    ['R-1','Акт','На подготовке','Офис',3,'','Да'],
-    ['R-2','Акт','На подготовке','Склад',4,'','Да'],
-    ['R-3','Счёт','На подготовке','Офис',5,'','Да']
+    ['R-1','Акт','На подготовке','Офис',3,'','Да','Да'],
+    ['R-2','Акт','На подготовке','Склад',4,'','Да','Да'],
+    ['R-3','Счёт','На подготовке','Офис',5,'','Да','Да']
   ]);
   assert.equal(ctx.readActiveDocumentWorkflowRules_().length, 3);
 });
 
 test('244. reordering duplicate active rules never creates row priority', () => {
-  const first = ['R-1','Акт','На подготовке','Офис',3,'','Да'];
-  const second = ['R-2','Акт','На подготовке','Офис',4,'','Да'];
+  const first = ['R-1','Акт','На подготовке','Офис',3,'','Да','Да'];
+  const second = ['R-2','Акт','На подготовке','Офис',4,'','Да','Да'];
   for (const rows of [[first, second], [second, first]]) {
     assert.throws(
       () => workflowRulesReadFixture(rows).readActiveDocumentWorkflowRules_(),
@@ -2560,8 +2560,8 @@ test('244. reordering duplicate active rules never creates row priority', () => 
 
 test('244a. blank conditions use the same normalization for matching and duplicates', () => {
   const rows = [
-    ['R-BLANK-1','Акт','','\u00a0',3,'','Да'],
-    ['R-BLANK-2',' акт ','   ','',4,'','Да']
+    ['R-BLANK-1','Акт','','\u00a0',3,'','Да','Да'],
+    ['R-BLANK-2',' акт ','   ','',4,'','Да','Да']
   ];
   const ctx = workflowRulesReadFixture(rows);
   assert.throws(() => ctx.readActiveDocumentWorkflowRules_(), error => {
@@ -2685,6 +2685,143 @@ test('251. operator sorting follows every documented tie-breaker', () => {
   ]; rows.forEach(row=>{while(row.length<31)row.push('')});
   const result=ctx.operatorCardPrepareRows_(rows,i,ctx.operatorCardNormalizeFilters_({}),{active:false},4,0,{});
   assert.deepEqual(Array.from(result.rows,x=>x.row[0]),['D-0','D-1','D-2','D-3','D-10']);
+});
+
+function notificationDate(ctx, iso) {
+  ctx.__notificationIso = iso;
+  return vm.runInContext('new Date(__notificationIso)', ctx);
+}
+function notificationDocument(ctx, extra = {}) {
+  return Object.assign({
+    documentId:'DOC-1', objectId:'OBJ-1', objectName:'Объект 1',
+    documentType:'Акт', documentNumber:'Акт №1', documentStatus:'На подготовке',
+    documentLocation:'В офисе', recordStatus:'Активная', implementationDays:'',
+    transferredAt:notificationDate(ctx,'2026-09-01T09:00:00Z'), statusChangedAt:''
+  }, extra);
+}
+function notificationRule(extra = {}) {
+  return Object.assign({
+    id:'R-1', documentType:'Акт', documentStatus:'На подготовке',
+    documentLocation:'В офисе', implementationDays:7, action:'Передать',
+    notify:'Да', sheetRow:5
+  }, extra);
+}
+function evaluateNotification(ctx, document, rules, businessIso) {
+  return ctx.evaluateWorkflowNotification_(
+    document,
+    rules === undefined ? [notificationRule()] : rules,
+    notificationDate(ctx, businessIso || '2026-09-01T12:00:00Z')
+  );
+}
+
+test('252. workflow-rule contract has exact eight notification-aware headers', () => {
+  const ctx=baseContext();
+  assert.deepEqual(Array.from(vm.runInContext('SYSTEM_CONFIG.SHEETS.WORKFLOW_RULES.requiredHeaders',ctx)),
+    ['ID правила','Тип документа','Статус документа','Где документ','Дней на реализацию','Действие','Уведомлять','Активно']);
+});
+test('253. missing or duplicate Уведомлять header fails validation', () => {
+  const ctx=baseContext(), config=vm.runInContext('SYSTEM_CONFIG.SHEETS.WORKFLOW_RULES',ctx);
+  const validate=headers=>ctx.validateConfiguredSheet_({getSheetByName:()=>({getLastColumn:()=>headers.length,getRange:()=>({getDisplayValues:()=>[headers]})})},'WORKFLOW_RULES',config);
+  assert.ok(validate(Array.from(config.requiredHeaders).filter(x=>x!=='Уведомлять')).errors.some(x=>/Уведомлять/.test(x)));
+  assert.ok(validate(Array.from(config.requiredHeaders).concat('Уведомлять')).errors.some(x=>/несколько раз/.test(x)));
+});
+test('254. workflow reader resolves shifted Уведомлять header', () => {
+  const ctx=baseContext();
+  const headers=['Активно','Уведомлять','ID правила','Действие','Дней на реализацию','Где документ','Статус документа','Тип документа'];
+  ctx.getSystemSheetContext_=()=>({headers,headerMap:Object.fromEntries(headers.map((h,i)=>[h,i+1])),config:{dataStartRow:5},sheet:{getLastRow:()=>5,getRange:()=>({getValues:()=>[['Да','Нет','R-9','Act',4,'В офисе','State','Type']]})}});
+  const rule=ctx.readActiveDocumentWorkflowRules_()[0];
+  assert.equal(rule.id,'R-9'); assert.equal(rule.notify,'Нет'); assert.equal(rule.implementationDays,4);
+});
+test('255. permission Да allows and Нет intentionally skips without warning', () => {
+  const ctx=baseContext(), doc=notificationDocument(ctx);
+  assert.equal(evaluateNotification(ctx,doc).status,'CANDIDATE');
+  const result=evaluateNotification(ctx,doc,[notificationRule({notify:'Нет'})]);
+  assert.equal(result.reason,'SKIPPED_RULE_NOTIFICATIONS_DISABLED'); assert.equal(result.warnings.length,0);
+});
+test('256. blank and invalid permission block only affected state with diagnostics', () => {
+  for (const value of ['', 'Возможно']) {
+    const ctx=baseContext(), result=evaluateNotification(ctx,notificationDocument(ctx),[notificationRule({id:'R-BAD',sheetRow:17,notify:value})]);
+    assert.equal(result.reason,'SKIPPED_INVALID_RULE_NOTIFICATION_PERMISSION');
+    assert.equal(result.warnings[0].code,'INVALID_RULE_NOTIFICATION_PERMISSION');
+    assert.deepEqual(Object.assign({},result.warnings[0].details),{ruleId:'R-BAD',sheetRow:17,invalidValue:value,workflowConditions:['акт','на подготовке','в офисе']});
+  }
+});
+test('257. inactive invalid permission is ignored and missing rule allows fallback notification', () => {
+  const ctx=workflowRulesReadFixture([['R-OFF','Акт','На подготовке','В офисе',2,'','bad','Нет']]);
+  const rules=ctx.readActiveDocumentWorkflowRules_(); assert.equal(rules.length,0);
+  const result=evaluateNotification(ctx,notificationDocument(ctx),rules,'2026-09-08T12:00:00Z');
+  assert.equal(result.status,'CANDIDATE'); assert.equal(result.effectiveDays,7); assert.equal(result.action,'не настроено');
+  assert.ok(result.warnings.some(w=>w.code==='WORKFLOW_RULE_MISSING'));
+});
+test('258. eligibility exclusions follow active, terminal, location and transfer order', () => {
+  const ctx=baseContext();
+  assert.equal(evaluateNotification(ctx,notificationDocument(ctx,{recordStatus:'Архивная'})).reason,'SKIPPED_INACTIVE_RECORD');
+  assert.equal(evaluateNotification(ctx,notificationDocument(ctx,{documentStatus:'Подписан с обеих сторон',statusChangedAt:'bad'})).reason,'SKIPPED_TERMINAL_STATUS');
+  assert.equal(evaluateNotification(ctx,notificationDocument(ctx,{documentLocation:'У заказчика'})).reason,'SKIPPED_DOCUMENT_NOT_IN_OFFICE');
+  assert.equal(evaluateNotification(ctx,notificationDocument(ctx,{transferredAt:''})).reason,'SKIPPED_TRANSFER_DATE_BLANK');
+  const invalid=evaluateNotification(ctx,notificationDocument(ctx,{transferredAt:'01.09.2026'}));
+  assert.equal(invalid.reason,'SKIPPED_INVALID_TRANSFER_DATE'); assert.equal(invalid.warnings[0].code,'INVALID_TRANSFER_DATE');
+});
+test('259. workflow cycle handles blank, before same Moscow day and older transfer', () => {
+  const ctx=baseContext(), business='2026-09-08T12:00:00Z';
+  assert.equal(evaluateNotification(ctx,notificationDocument(ctx),[],business).status,'CANDIDATE');
+  assert.equal(evaluateNotification(ctx,notificationDocument(ctx,{statusChangedAt:notificationDate(ctx,'2026-08-31T12:00:00Z')}),[],business).status,'CANDIDATE');
+  const stale=evaluateNotification(ctx,notificationDocument(ctx,{statusChangedAt:notificationDate(ctx,'2026-09-02T12:00:00Z')}),[],business);
+  assert.equal(stale.reason,'SKIPPED_WORKFLOW_CYCLE_NOT_STARTED'); assert.equal(stale.warnings[0].code,'WORKFLOW_CYCLE_NOT_STARTED');
+  const same=evaluateNotification(ctx,notificationDocument(ctx,{transferredAt:notificationDate(ctx,'2026-09-01T00:30:00Z'),statusChangedAt:notificationDate(ctx,'2026-09-01T20:30:00Z')}),[],business);
+  assert.equal(same.status,'CANDIDATE');
+});
+test('260. invalid status-change date warns while terminal status wins first', () => {
+  const ctx=baseContext(), invalid=evaluateNotification(ctx,notificationDocument(ctx,{statusChangedAt:'bad'}));
+  assert.equal(invalid.reason,'SKIPPED_INVALID_STATUS_CHANGE_DATE'); assert.equal(invalid.warnings[0].code,'INVALID_STATUS_CHANGE_DATE');
+  const terminal=evaluateNotification(ctx,notificationDocument(ctx,{documentStatus:'Подписан с обеих сторон',statusChangedAt:'bad'}));
+  assert.equal(terminal.reason,'SKIPPED_TERMINAL_STATUS'); assert.equal(terminal.warnings.length,0);
+});
+test('261. planner effective days preserve manual zero, manual positive, rule and fallback seven', () => {
+  let ctx=baseContext(); assert.equal(evaluateNotification(ctx,notificationDocument(ctx,{implementationDays:0})).effectiveDays,0);
+  ctx=baseContext(); assert.equal(evaluateNotification(ctx,notificationDocument(ctx,{implementationDays:3}),undefined,'2026-09-04T12:00:00Z').effectiveDays,3);
+  ctx=baseContext(); assert.equal(evaluateNotification(ctx,notificationDocument(ctx),[notificationRule({implementationDays:3})],'2026-09-04T12:00:00Z').effectiveDays,3);
+  ctx=baseContext(); assert.equal(evaluateNotification(ctx,notificationDocument(ctx),[],'2026-09-08T12:00:00Z').effectiveDays,7);
+});
+test('262. event selection covers D-7, D-3, today, overdue and irrelevant day', () => {
+  const ctx=baseContext(), doc=notificationDocument(ctx,{implementationDays:7});
+  assert.equal(evaluateNotification(ctx,doc,[],'2026-09-01T12:00:00Z').event,'D_MINUS_7');
+  assert.equal(evaluateNotification(ctx,doc,[],'2026-09-05T12:00:00Z').event,'D_MINUS_3');
+  assert.equal(evaluateNotification(ctx,doc,[],'2026-09-08T12:00:00Z').event,'DUE_TODAY');
+  assert.equal(evaluateNotification(ctx,doc,[],'2026-09-09T12:00:00Z').event,'OVERDUE_DAILY');
+  assert.equal(evaluateNotification(ctx,doc,[],'2026-09-03T12:00:00Z').reason,'SKIPPED_NO_EVENT_TODAY');
+});
+test('263. Moscow date ordinals handle UTC, month and year boundaries', () => {
+  const ctx=baseContext();
+  const before=ctx.workflowNotificationDateOrdinal_(notificationDate(ctx,'2026-08-31T20:59:59Z'));
+  const after=ctx.workflowNotificationDateOrdinal_(notificationDate(ctx,'2026-08-31T21:00:00Z'));
+  assert.equal(before.key,'2026-08-31'); assert.equal(after.key,'2026-09-01'); assert.equal(after.day-before.day,1);
+  assert.equal(ctx.workflowNotificationDateKeyFromDay_(after.day+30),'2026-10-01');
+  assert.equal(ctx.workflowNotificationDateOrdinal_(notificationDate(ctx,'2026-12-31T21:00:00Z')).key,'2027-01-01');
+});
+test('264. blank action warns without blocking notification', () => {
+  const ctx=baseContext(), result=evaluateNotification(ctx,notificationDocument(ctx),[notificationRule({action:''})]);
+  assert.equal(result.status,'CANDIDATE'); assert.equal(result.action,'не настроено');
+  assert.ok(result.warnings.some(w=>w.code==='WORKFLOW_ACTION_MISSING'));
+});
+test('265. pure evaluation and deterministic model do not mutate inputs', () => {
+  const ctx=baseContext(), doc=notificationDocument(ctx), rule=notificationRule(), rules=[rule];
+  const docBefore=JSON.stringify(doc), ruleBefore=JSON.stringify(rule), result=evaluateNotification(ctx,doc,rules), results=[result];
+  ctx.buildWorkflowNotificationModel_(results);
+  assert.equal(JSON.stringify(doc),docBefore); assert.equal(JSON.stringify(rule),ruleBefore);
+  assert.equal(rules[0],rule); assert.equal(results[0],result); assert.equal(doc.implementationDays,'');
+});
+test('266. notification model groups and naturally sorts by actual object/type/number/id fields', () => {
+  const ctx=baseContext();
+  const candidate=(id,obj,name,type,number)=>Object.assign({},evaluateNotification(ctx,notificationDocument(ctx)),{documentId:id,objectId:obj,objectName:name,documentType:type,documentNumber:number});
+  const model=ctx.buildWorkflowNotificationModel_([candidate('D-10','O-2','Б','Акт','№10'),candidate('D-2','O-1','А','Акт','№2'),candidate('D-1','O-1','А','Акт','№2')]);
+  assert.equal(model.candidateCount,3); assert.deepEqual(Array.from(model.objects,x=>x.objectId),['O-1','O-2']);
+  assert.deepEqual(Array.from(model.objects[0].documents,x=>x.documentId),['D-1','D-2']);
+});
+test('267. stage-one notification domain has no side-effect or delivery dependencies', () => {
+  const text=fs.readFileSync('WorkflowNotifications.gs','utf8');
+  assert.doesNotMatch(text,/SpreadsheetApp|PropertiesService|UrlFetchApp|ScriptApp|LockService/);
+  assert.doesNotMatch(text,/Telegram|dedup|retry|trigger|notification history/i);
 });
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);

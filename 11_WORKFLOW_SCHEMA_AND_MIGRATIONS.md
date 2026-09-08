@@ -1,7 +1,8 @@
 # Workflow schema and data migrations
 
 This change prepares data contracts after owner approval. It does not install
-columns in Google Sheets and does not implement a notification engine.
+columns in Google Sheets. It includes only pure notification-domain planning;
+notification delivery and its side effects are not implemented.
 
 ## Statuses and KS2/KS3
 
@@ -46,7 +47,8 @@ it does not constrain foremen or Web users and does not change ST/CL IDs.
 
 `Справочник условий и действий` has headers at row 4 and data from row 5:
 `ID правила`, `Тип документа`, `Статус документа`, `Где документ`, `Дней на
-реализацию`, `Действие`, `Активно`. The reader returns only active (`Да`) rules
+реализацию`, `Действие`, `Уведомлять`, `Активно`. The reader returns only active
+(`Да`) rules
 and rejects an invalid active rule deadline. This is a mandatory system sheet:
 the common `validateSystemStructure()` check requires both the sheet and its
 exact `WORKFLOW_RULES` header contract even when it contains no data rows. The
@@ -66,8 +68,12 @@ never writes a fallback into a document. A control date is returned only when
 `Когда передан` is filled.
 
 No automatic object synchronization writes either new document-owned field.
-No Telegram integration, scheduler, trigger, workflow engine, dynamic address
-dropdown, or new Operator Card sorting is included.
+The pure notification-domain planner treats `Уведомлять = Да` as allowed,
+`Нет` as intentionally disabled, and any other active-rule value as a
+warning that blocks only that workflow state. It validates the current workflow
+cycle and calculates Moscow calendar-day notification events without writing any
+source data. No Telegram integration, history, deduplication, scheduler, trigger,
+dynamic address dropdown, or new Operator Card sorting is included.
 
 ## Manual Sheet work after merge
 
@@ -78,7 +84,7 @@ Before deploying code or running migrations on a copy, the owner must:
 2. add `Адрес клиента` after `Телефон` on `Справочник клиентов`;
 3. add `Участвует в документообороте` on `Справочник сотрудников` and fill
    every applicable row with `Да` or `Нет`;
-4. obligatorily create `Справочник условий и действий` with its seven exact
+4. obligatorily create `Справочник условий и действий` with its eight exact
    headers before installing or running the new code, even if it initially has
    no rules; hide the sheet manually for ordinary users if required;
 5. add `На подготовке`, `На согласовании у заказчика`, and `Подписан у

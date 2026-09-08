@@ -101,6 +101,8 @@ function readActiveDocumentWorkflowRules_() {
       documentLocation: String(row[column(H.DOCUMENT_LOCATION)] || '').trim(),
       implementationDays: days,
       action: String(row[column(H.ACTION)] || '').trim(),
+      notify: String(row[column(H.NOTIFY)] == null
+        ? '' : row[column(H.NOTIFY)]).trim(),
       sheetRow: item.sheetRow
     };
   });
