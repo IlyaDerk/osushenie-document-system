@@ -3,7 +3,7 @@ const assert = require('assert');
 const fs = require('fs');
 const vm = require('vm');
 const cp = require('child_process');
-const files = ['SystemCore.gs', 'DocumentArchitectureCore.gs', 'CreateObjectDocuments.gs', 'SyncObjectData.gs', 'ArchiveChangeHistory.gs', 'DocumentWorkflowSchema.gs', 'WorkflowNotifications.gs', 'OperatorCard.gs', 'OperatorCardSave.gs', 'ObjectSheetControls.gs', 'Code.gs', 'WebAppAuth.gs', 'DocumentWebAppServer.gs', 'DocumentArchitectureV2Migration.gs', 'ObjectCardReport.gs', 'ManagerSummaryReport.gs'];
+const files = ['SystemCore.gs', 'DocumentArchitectureCore.gs', 'CreateObjectDocuments.gs', 'SyncObjectData.gs', 'ArchiveChangeHistory.gs', 'DocumentWorkflowSchema.gs', 'WorkflowNotifications.gs', 'WorkflowNotificationHistory.gs', 'WorkflowNotificationJobs.gs', 'OperatorCard.gs', 'OperatorCardSave.gs', 'ObjectSheetControls.gs', 'Code.gs', 'WebAppAuth.gs', 'DocumentWebAppServer.gs', 'DocumentArchitectureV2Migration.gs', 'ObjectCardReport.gs', 'ManagerSummaryReport.gs'];
 const source = files.map(f => fs.readFileSync(f, 'utf8')).join('\n');
 let passed = 0;
 function test(name, fn) {
@@ -14,6 +14,7 @@ function baseContext(extra = {}) {
   const sandbox = {
     console,
     Utilities: {
+      getUuid() { return '00000000-0000-4000-8000-000000000001'; },
       formatDate(date, zone, pattern) {
         if (pattern === 'yyyyMMdd') return '20260804';
         if (pattern === 'yyyy-MM') return date.toISOString().slice(0, 7);
@@ -2822,6 +2823,85 @@ test('267. stage-one notification domain has no side-effect or delivery dependen
   const text=fs.readFileSync('WorkflowNotifications.gs','utf8');
   assert.doesNotMatch(text,/SpreadsheetApp|PropertiesService|UrlFetchApp|ScriptApp|LockService/);
   assert.doesNotMatch(text,/Telegram|dedup|retry|trigger|notification history/i);
+});
+
+test('268. notification history contract has exact headers and coordinates', () => {
+  const ctx=baseContext(), config=vm.runInContext('SYSTEM_CONFIG.SHEETS.NOTIFICATION_HISTORY',ctx);
+  assert.equal(config.name,'История уведомлений'); assert.equal(config.headerRow,2); assert.equal(config.dataStartRow,3);
+  assert.equal(config.requiredHeaders.length,22);
+  assert.deepEqual(Array.from(config.requiredHeaders),['ID записи','ID запуска','Тип записи','ID доставки','ID документа','ID объекта','Дата и время','Дата уведомления','Событие уведомления','Контрольная дата','Статус документа','Где документ','Канал','Получатель','Результат','ID сообщения Telegram','Код ошибки','Текст ошибки','Номер попытки','Предупреждение конфигурации','Хэш сообщения','Текст сообщения']);
+});
+test('269. notification records adapt to shifted headers', () => {
+  const ctx=baseContext(), headers=Array.from(vm.runInContext('SYSTEM_CONFIG.SHEETS.NOTIFICATION_HISTORY.requiredHeaders',ctx)).reverse();
+  const context={headers,headerMap:Object.fromEntries(headers.map((h,i)=>[h,i+1]))};
+  const record=ctx.buildBusinessReservationRecord_({recordId:'NTH-1',runId:'NTR-1',deliveryId:'NTD-1',documentId:' DOC-1 ',notificationDate:'2026-09-08',event:'due_today',channel:'telegram',target:' -1001 '});
+  const row=ctx.notificationHistoryRecordToRow_(record,context);
+  assert.equal(row[headers.indexOf('ID документа')],'DOC-1'); assert.equal(row[headers.indexOf('Получатель')],'-1001');
+});
+test('270. missing and duplicate history headers fail closed in core context', () => {
+  const ctx=baseContext();
+  function fixture(headers){ctx.getSystemSpreadsheet_=()=>({getSheetByName:()=>({getLastColumn:()=>headers.length,getRange:()=>({getDisplayValues:()=>[headers]})})});}
+  const required=Array.from(vm.runInContext('SYSTEM_CONFIG.SHEETS.NOTIFICATION_HISTORY.requiredHeaders',ctx));
+  fixture(required.slice(1)); assert.throws(()=>ctx.getSystemSheetContext_('NOTIFICATION_HISTORY'),/absent|missing|headers|\u0437аголовк/i);
+  const duplicate=required.slice(); duplicate.push(duplicate[0]); fixture(duplicate); assert.throws(()=>ctx.getSystemSheetContext_('NOTIFICATION_HISTORY'),/repeat|duplicate|\u043fовтор/i);
+});
+test('271. deterministic business key normalizes values and preserves target string', () => {
+  const ctx=baseContext(), a=ctx.buildNotificationBusinessKey_(' DOC-1 ','2026-09-08','due_today','telegram',' -100123456789012345 ');
+  assert.equal(a,'DOC-1|2026-09-08|DUE_TODAY|TELEGRAM|-100123456789012345');
+  assert.equal(a,ctx.buildNotificationBusinessKey_('DOC-1','2026-09-08','DUE_TODAY','TELEGRAM','-100123456789012345'));
+  assert.notEqual(a,ctx.buildNotificationBusinessKey_('DOC-1','2026-09-09','DUE_TODAY','TELEGRAM','-100123456789012345'));
+  assert.notEqual(a,ctx.buildNotificationBusinessKey_('DOC-1','2026-09-08','D_MINUS_3','TELEGRAM','-100123456789012345'));
+});
+test('272. builders distinguish reservation, prepared, result, warning, and test', () => {
+  const ctx=baseContext(), base={recordId:'NTH-1',runId:'NTR-1',deliveryId:'NTD-1',documentId:'D',notificationDate:'2026-09-08',event:'DUE_TODAY',channel:'TELEGRAM',target:'T'};
+  assert.equal(ctx.buildBusinessReservationRecord_(base).result,'RESERVED');
+  assert.equal(ctx.buildDeliveryPreparedRecord_(Object.assign({},base,{attemptNumber:1})).result,'PREPARED');
+  assert.equal(ctx.buildDeliveryResultRecord_(Object.assign({},base,{result:'SENT'})).recordType,'DELIVERY_RESULT');
+  assert.equal(ctx.buildConfigWarningRecord_(base).result,'FAILED_CONFIGURATION');
+  assert.equal(ctx.buildTestDeliveryRecord_(base).recordType,'TEST_DELIVERY');
+});
+test('273. folding exposes business and delivery outcome state while ignoring tests', () => {
+  const ctx=baseContext(), base={recordId:'1',runId:'R',deliveryId:'X',documentId:'D',notificationDate:'2026-09-08',event:'DUE_TODAY',channel:'TELEGRAM',target:'T'};
+  const reservation=ctx.buildBusinessReservationRecord_(base), prepared=ctx.buildDeliveryPreparedRecord_(Object.assign({},base,{recordId:'2',attemptNumber:1}));
+  const failed=ctx.buildDeliveryResultRecord_(Object.assign({},base,{recordId:'3',attemptNumber:1,result:'FAILED_TECHNICAL'}));
+  const sent=ctx.buildDeliveryResultRecord_(Object.assign({},base,{recordId:'4',attemptNumber:2,result:'SENT'}));
+  const testRecord=ctx.buildTestDeliveryRecord_(Object.assign({},base,{recordId:'5'}));
+  const state=ctx.foldWorkflowNotificationHistory_([reservation,prepared,failed,sent,testRecord]);
+  assert.equal(Object.keys(state.business).length,1); assert.equal(state.deliveries.X.finalSent,true);
+  assert.equal(state.deliveries.X.failedTechnical,true); assert.equal(state.deliveries.X.latestAttempt,2); assert.equal(state.deliveries.X.retryAlreadyAttempted,true);
+});
+function atomicNotificationFixture(existing=[]) {
+  const ctx=baseContext(), headers=Array.from(vm.runInContext('SYSTEM_CONFIG.SHEETS.NOTIFICATION_HISTORY.requiredHeaders',ctx)); let rows=[], setCalls=0;
+  const context={headers,headerMap:Object.fromEntries(headers.map((h,i)=>[h,i+1])),config:{dataStartRow:3},sheet:{getLastRow:()=>existing.length+2,getRange:()=>({setValues(v){setCalls++;rows=v;},getValues:()=>[]})}};
+  ctx.withDocumentLock_=fn=>fn(); ctx.readWorkflowNotificationHistory_=()=>({context,records:existing});
+  return {ctx,rows:()=>rows,setCalls:()=>setCalls};
+}
+test('274. atomic reservation writes reservations and prepared deliveries in one batch', () => {
+  const f=atomicNotificationFixture(), c={documentId:'D',notificationDate:'2026-09-08',event:'DUE_TODAY',channel:'TELEGRAM',target:'T'};
+  const result=f.ctx.reserveWorkflowNotificationPlan_({runId:'R',businessCandidates:[c]},accepted=>({businessReservations:accepted.map(x=>Object.assign({},x,{recordId:'H1',runId:'R',deliveryId:'X'})),deliveries:[{recordId:'H2',runId:'R',deliveryId:'X',attemptNumber:1,channel:'TELEGRAM',target:'T',messageText:'synthetic',messageHash:'hash'}]}));
+  assert.equal(result.accepted.length,1); assert.equal(f.setCalls(),1); assert.equal(f.rows().length,2);
+});
+test('275. final locked dedup removes event and creates no empty prepared delivery', () => {
+  const ctx=baseContext(), c={recordId:'OLD',runId:'OLD',deliveryId:'OLD-D',documentId:'D',notificationDate:'2026-09-08',event:'DUE_TODAY',channel:'TELEGRAM',target:'T'};
+  const f=atomicNotificationFixture([ctx.buildBusinessReservationRecord_(c)]), candidate=Object.assign({},c); let acceptedCount=-1;
+  const result=f.ctx.reserveWorkflowNotificationPlan_({runId:'R',businessCandidates:[candidate]},accepted=>{acceptedCount=accepted.length;return {businessReservations:[],deliveries:[]};});
+  assert.equal(acceptedCount,0); assert.equal(result.alreadyReserved.length,1); assert.equal(f.setCalls(),0);
+});
+test('276. invalid atomic plans fail before spreadsheet write', () => {
+  const f=atomicNotificationFixture(), c={documentId:'D',notificationDate:'2026-09-08',event:'DUE_TODAY',channel:'TELEGRAM',target:'T'};
+  assert.throws(()=>f.ctx.reserveWorkflowNotificationPlan_({runId:'R',businessCandidates:[c]},accepted=>({businessReservations:accepted.map(x=>Object.assign({},x,{recordId:'H',runId:'R',deliveryId:'MISSING'})),deliveries:[]})),/existing delivery/);
+  assert.equal(f.setCalls(),0);
+  assert.throws(()=>f.ctx.reserveWorkflowNotificationPlan_({runId:'R',businessCandidates:[c,c]},()=>({})),/Duplicate business key/);
+});
+test('277. dry-run planner previews dedup, aggregation and grouped model without mutation', () => {
+  const ctx=baseContext(), doc=notificationDocument(ctx), before=JSON.stringify(doc), at=notificationDate(ctx,'2026-09-08T12:00:00Z'), candidate=ctx.evaluateWorkflowNotification_(doc,[notificationRule()],at);
+  const old=ctx.buildBusinessReservationRecord_({recordId:'H',runId:'R',deliveryId:'X',documentId:candidate.documentId,notificationDate:'2026-09-08',event:candidate.event,channel:'TELEGRAM',target:'DRY_RUN_GROUP_TARGET'});
+  const result=ctx.buildWorkflowNotificationDryRun_({documents:[doc],rules:[notificationRule()],historyRecords:[old],businessDate:'2026-09-08',businessAt:at,generatedAt:at});
+  assert.equal(result.mode,'DRY_RUN'); assert.equal(result.counts.alreadyReserved,1); assert.equal(result.counts.wouldSend,0); assert.equal(result.model.candidateCount,0); assert.equal(JSON.stringify(doc),before);
+});
+test('278. Stage 2 adds no transport, retry, trigger, or properties configuration', () => {
+  const text=['WorkflowNotificationHistory.gs','WorkflowNotificationJobs.gs'].map(f=>fs.readFileSync(f,'utf8')).join('\n');
+  assert.doesNotMatch(text,/UrlFetchApp|api\.telegram|newTrigger|retry worker|bot token|getScriptProperties/iu);
 });
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);
