@@ -132,6 +132,26 @@ const SYSTEM_HEADERS = Object.freeze({
   NOTIFY: 'Уведомлять',
   ACTIVE: 'Активно',
 
+  // История уведомлений
+  NOTIFICATION_RECORD_ID: 'ID записи',
+  NOTIFICATION_RUN_ID: 'ID запуска',
+  NOTIFICATION_RECORD_TYPE: 'Тип записи',
+  DELIVERY_ID: 'ID доставки',
+  NOTIFICATION_DATETIME: 'Дата и время',
+  NOTIFICATION_DATE: 'Дата уведомления',
+  NOTIFICATION_EVENT: 'Событие уведомления',
+  CONTROL_DATE: 'Контрольная дата',
+  CHANNEL: 'Канал',
+  RECIPIENT: 'Получатель',
+  RESULT: 'Результат',
+  TELEGRAM_MESSAGE_ID: 'ID сообщения Telegram',
+  ERROR_CODE: 'Код ошибки',
+  NOTIFICATION_ERROR_TEXT: 'Текст ошибки',
+  ATTEMPT_NUMBER: 'Номер попытки',
+  CONFIG_WARNING: 'Предупреждение конфигурации',
+  MESSAGE_HASH: 'Хэш сообщения',
+  MESSAGE_TEXT: 'Текст сообщения',
+
   // Справочник типов документов
   MANDATORY: 'Обязательность',
   CREATE_ON_OBJECT_CREATION: 'Создавать при создании объекта',
@@ -237,7 +257,10 @@ const SYSTEM_CONFIG = {
     EMPLOYEE: 'ST-',
     CLIENT: 'CL-',
     OPERATION: 'OP-',
-    CHANGE: 'CHG-'
+    CHANGE: 'CHG-',
+    NOTIFICATION_RUN: 'NTR-',
+    NOTIFICATION_DELIVERY: 'NTD-',
+    NOTIFICATION_HISTORY: 'NTH-'
   },
 
   /**
@@ -284,6 +307,21 @@ const SYSTEM_CONFIG = {
         H.ERRORS_COUNT,
         H.EXECUTION_SECONDS,
         H.ERROR_TEXT
+      ]
+    },
+
+    NOTIFICATION_HISTORY: {
+      name: 'История уведомлений',
+      headerRow: 2,
+      dataStartRow: 3,
+      requiredHeaders: [
+        H.NOTIFICATION_RECORD_ID, H.NOTIFICATION_RUN_ID,
+        H.NOTIFICATION_RECORD_TYPE, H.DELIVERY_ID, H.DOCUMENT_ID,
+        H.OBJECT_ID, H.NOTIFICATION_DATETIME, H.NOTIFICATION_DATE,
+        H.NOTIFICATION_EVENT, H.CONTROL_DATE, H.DOCUMENT_STATUS,
+        H.DOCUMENT_LOCATION, H.CHANNEL, H.RECIPIENT, H.RESULT,
+        H.TELEGRAM_MESSAGE_ID, H.ERROR_CODE, H.NOTIFICATION_ERROR_TEXT,
+        H.ATTEMPT_NUMBER, H.CONFIG_WARNING, H.MESSAGE_HASH, H.MESSAGE_TEXT
       ]
     },
 

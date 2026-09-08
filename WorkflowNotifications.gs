@@ -44,6 +44,7 @@ function workflowNotificationSkip_(reason, document, warnings) {
     status: 'SKIPPED',
     reason: reason,
     documentId: String(document.documentId || '').trim(),
+    objectId: String(document.objectId || '').trim(),
     warnings: warnings || []
   };
 }
