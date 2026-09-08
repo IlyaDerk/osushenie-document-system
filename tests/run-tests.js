@@ -2936,5 +2936,26 @@ test('283. valid delivery result is appended in one batch', () => {
   const saved=f.ctx.appendWorkflowNotificationHistoryRecords_([record]);
   assert.equal(saved.length,1); assert.equal(f.setCalls(),1); assert.equal(f.rows().length,1);
 });
+test('284. reservation and prepared states cannot be delivery results', () => {
+  ['RESERVED','PREPARED'].forEach((result,index) => {
+    const f=atomicNotificationFixture(), record=f.ctx.buildDeliveryResultRecord_({recordId:'H'+index,runId:'R',deliveryId:'D',attemptNumber:1,result});
+    assert.throws(()=>f.ctx.appendWorkflowNotificationHistoryRecords_([record]),/Unsupported delivery result/);
+    assert.equal(f.setCalls(),0);
+  });
+});
+test('285. approved delivery outcomes include sent, technical failure, and unknown', () => {
+  const f=atomicNotificationFixture();
+  const records=['SENT','FAILED_TECHNICAL','UNKNOWN_DELIVERY_OUTCOME'].map((result,index)=>
+    f.ctx.buildDeliveryResultRecord_({recordId:'H'+index,runId:'R',deliveryId:'D',attemptNumber:index+1,result}));
+  const saved=f.ctx.appendWorkflowNotificationHistoryRecords_(records);
+  assert.equal(saved.length,3); assert.equal(f.setCalls(),1); assert.equal(f.rows().length,3);
+});
+test('286. test delivery rejects reserved while retaining prepared state', () => {
+  const rejected=atomicNotificationFixture(), reserved=rejected.ctx.buildTestDeliveryRecord_({recordId:'H1',runId:'R',deliveryId:'D',attemptNumber:1,result:'RESERVED'});
+  assert.throws(()=>rejected.ctx.appendWorkflowNotificationHistoryRecords_([reserved]),/Unsupported test delivery result/);
+  assert.equal(rejected.setCalls(),0);
+  const accepted=atomicNotificationFixture(), prepared=accepted.ctx.buildTestDeliveryRecord_({recordId:'H2',runId:'R',deliveryId:'D',attemptNumber:1,result:'PREPARED'});
+  accepted.ctx.appendWorkflowNotificationHistoryRecords_([prepared]); assert.equal(accepted.setCalls(),1);
+});
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);

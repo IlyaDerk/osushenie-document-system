@@ -18,6 +18,18 @@ const WORKFLOW_NOTIFICATION_HISTORY_ = Object.freeze({
   })
 });
 
+const WORKFLOW_NOTIFICATION_DELIVERY_RESULT_RESULTS_ = Object.freeze([
+  WORKFLOW_NOTIFICATION_HISTORY_.RESULTS.SENT,
+  WORKFLOW_NOTIFICATION_HISTORY_.RESULTS.FAILED_TECHNICAL,
+  WORKFLOW_NOTIFICATION_HISTORY_.RESULTS.FAILED_PERMANENT,
+  WORKFLOW_NOTIFICATION_HISTORY_.RESULTS.FAILED_CONFIGURATION,
+  WORKFLOW_NOTIFICATION_HISTORY_.RESULTS.UNKNOWN_DELIVERY_OUTCOME,
+  WORKFLOW_NOTIFICATION_HISTORY_.RESULTS.SKIPPED_STALE_BEFORE_RETRY
+]);
+const WORKFLOW_NOTIFICATION_TEST_DELIVERY_RESULTS_ = Object.freeze([
+  WORKFLOW_NOTIFICATION_HISTORY_.RESULTS.PREPARED
+].concat(WORKFLOW_NOTIFICATION_DELIVERY_RESULT_RESULTS_));
+
 function notificationHistoryString_(value) {
   return String(value == null ? '' : value).trim();
 }
@@ -312,9 +324,6 @@ function validateWorkflowNotificationLifecycleRecord_(record) {
     throw new Error('Lifecycle notification record type must be canonical: ' + type);
   }
   const result = notificationHistoryString_(record.result).toUpperCase();
-  const approvedResults = Object.keys(WORKFLOW_NOTIFICATION_HISTORY_.RESULTS).map(function (key) {
-    return WORKFLOW_NOTIFICATION_HISTORY_.RESULTS[key];
-  });
   if (type === WORKFLOW_NOTIFICATION_HISTORY_.TYPES.DELIVERY_RESULT) {
     if (!notificationHistoryString_(record.deliveryId)) {
       throw new Error('Delivery result delivery ID is required.');
@@ -322,7 +331,7 @@ function validateWorkflowNotificationLifecycleRecord_(record) {
     if (!Number.isInteger(Number(record.attemptNumber)) || Number(record.attemptNumber) < 1) {
       throw new Error('Delivery result attempt number must be a positive integer.');
     }
-    if (approvedResults.indexOf(result) < 0) {
+    if (WORKFLOW_NOTIFICATION_DELIVERY_RESULT_RESULTS_.indexOf(result) < 0) {
       throw new Error('Unsupported delivery result: ' + (result || '(blank)'));
     }
     if (record.result !== result) throw new Error('Delivery result must be canonical: ' + result);
@@ -338,7 +347,7 @@ function validateWorkflowNotificationLifecycleRecord_(record) {
     if (!Number.isInteger(Number(record.attemptNumber)) || Number(record.attemptNumber) < 1) {
       throw new Error('Test delivery attempt number must be a positive integer.');
     }
-    if (approvedResults.indexOf(result) < 0) {
+    if (WORKFLOW_NOTIFICATION_TEST_DELIVERY_RESULTS_.indexOf(result) < 0) {
       throw new Error('Unsupported test delivery result: ' + (result || '(blank)'));
     }
     if (record.result !== result) throw new Error('Test delivery result must be canonical: ' + result);
