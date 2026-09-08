@@ -35,12 +35,32 @@ function aggregateWorkflowNotificationWarnings_(results, runId) {
       const key = [notificationHistoryString_(runId), warning.code || '',
         details.ruleId || '', details.sheetRow || '', JSON.stringify(workflow)].join('|');
       if (!byKey[key]) byKey[key] = {
-        code: warning.code, message: warning.message, details: details, count: 0
+        code: warning.code, message: warning.message, details: details, count: 0,
+        affectedDocumentIds: [], affectedObjectIds: [],
+        documentIdsSeen: {}, objectIdsSeen: {}
       };
-      byKey[key].count++;
+      const aggregated = byKey[key];
+      aggregated.count++;
+      const documentId = notificationHistoryString_(result.documentId);
+      const objectId = notificationHistoryString_(result.objectId);
+      if (documentId && !aggregated.documentIdsSeen[documentId]) {
+        aggregated.documentIdsSeen[documentId] = true;
+        aggregated.affectedDocumentIds.push(documentId);
+      }
+      if (objectId && !aggregated.objectIdsSeen[objectId]) {
+        aggregated.objectIdsSeen[objectId] = true;
+        aggregated.affectedObjectIds.push(objectId);
+      }
     });
   });
-  return Object.keys(byKey).sort().map(function (key) { return byKey[key]; });
+  return Object.keys(byKey).sort().map(function (key) {
+    const warning = byKey[key];
+    warning.affectedDocumentIds.sort(workflowNotificationCompareText_);
+    warning.affectedObjectIds.sort(workflowNotificationCompareText_);
+    delete warning.documentIdsSeen;
+    delete warning.objectIdsSeen;
+    return warning;
+  });
 }
 
 function buildWorkflowNotificationDryRun_(options) {

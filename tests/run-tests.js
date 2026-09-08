@@ -2903,5 +2903,38 @@ test('278. Stage 2 adds no transport, retry, trigger, or properties configuratio
   const text=['WorkflowNotificationHistory.gs','WorkflowNotificationJobs.gs'].map(f=>fs.readFileSync(f,'utf8')).join('\n');
   assert.doesNotMatch(text,/UrlFetchApp|api\.telegram|newTrigger|retry worker|bot token|getScriptProperties/iu);
 });
+test('279. aggregated workflow-cycle warning preserves deterministic affected identities', () => {
+  const ctx=baseContext(), business='2026-09-08T12:00:00Z';
+  const results=['DOC-2','DOC-1'].map((documentId,index)=>evaluateNotification(ctx,
+    notificationDocument(ctx,{documentId,objectId:'OBJ-'+(2-index),statusChangedAt:notificationDate(ctx,'2026-09-02T12:00:00Z')}),[],business));
+  assert.ok(results.every(result=>result.warnings[0].code==='WORKFLOW_CYCLE_NOT_STARTED'));
+  const warnings=ctx.aggregateWorkflowNotificationWarnings_(results,'NTR-1');
+  assert.equal(warnings.length,1); assert.equal(warnings[0].count,2);
+  assert.deepEqual(Array.from(warnings[0].affectedDocumentIds),['DOC-1','DOC-2']);
+  assert.deepEqual(Array.from(warnings[0].affectedObjectIds),['OBJ-1','OBJ-2']);
+});
+test('280. lifecycle append rejects unknown type before spreadsheet write', () => {
+  const f=atomicNotificationFixture();
+  assert.throws(()=>f.ctx.appendWorkflowNotificationHistoryRecords_([{recordId:'H',runId:'R',recordType:'ARBITRARY'}]),/Unsupported lifecycle/);
+  assert.equal(f.setCalls(),0);
+});
+test('281. lifecycle append rejects arbitrary delivery result before write', () => {
+  const f=atomicNotificationFixture(), record=f.ctx.buildDeliveryResultRecord_({recordId:'H',runId:'R',deliveryId:'D',attemptNumber:1,result:'MADE_UP'});
+  assert.throws(()=>f.ctx.appendWorkflowNotificationHistoryRecords_([record]),/Unsupported delivery result/);
+  assert.equal(f.setCalls(),0);
+});
+test('282. lifecycle append rejects missing delivery and invalid attempt before write', () => {
+  const f=atomicNotificationFixture();
+  const missing=f.ctx.buildDeliveryResultRecord_({recordId:'H1',runId:'R',attemptNumber:1,result:'SENT'});
+  assert.throws(()=>f.ctx.appendWorkflowNotificationHistoryRecords_([missing]),/delivery ID/);
+  const invalid=f.ctx.buildDeliveryResultRecord_({recordId:'H2',runId:'R',deliveryId:'D',attemptNumber:0,result:'SENT'});
+  assert.throws(()=>f.ctx.appendWorkflowNotificationHistoryRecords_([invalid]),/positive integer/);
+  assert.equal(f.setCalls(),0);
+});
+test('283. valid delivery result is appended in one batch', () => {
+  const f=atomicNotificationFixture(), record=f.ctx.buildDeliveryResultRecord_({recordId:'H',runId:'R',deliveryId:'D',attemptNumber:1,result:'SENT'});
+  const saved=f.ctx.appendWorkflowNotificationHistoryRecords_([record]);
+  assert.equal(saved.length,1); assert.equal(f.setCalls(),1); assert.equal(f.rows().length,1);
+});
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);

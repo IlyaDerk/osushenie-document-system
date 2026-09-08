@@ -292,15 +292,64 @@ function reserveWorkflowNotificationPlan_(input, deliveryBuilder) {
 }
 
 /** Appends non-reservation lifecycle records in one contiguous batch. */
+function validateWorkflowNotificationLifecycleRecord_(record) {
+  if (!record || !notificationHistoryString_(record.recordId)) {
+    throw new Error('Lifecycle history record ID is required.');
+  }
+  if (!notificationHistoryString_(record.runId)) {
+    throw new Error('Lifecycle notification run ID is required.');
+  }
+  const type = notificationHistoryString_(record.recordType).toUpperCase();
+  const allowedTypes = [
+    WORKFLOW_NOTIFICATION_HISTORY_.TYPES.DELIVERY_RESULT,
+    WORKFLOW_NOTIFICATION_HISTORY_.TYPES.CONFIG_WARNING,
+    WORKFLOW_NOTIFICATION_HISTORY_.TYPES.TEST_DELIVERY
+  ];
+  if (allowedTypes.indexOf(type) < 0) {
+    throw new Error('Unsupported lifecycle notification record type: ' + (type || '(blank)'));
+  }
+  if (record.recordType !== type) {
+    throw new Error('Lifecycle notification record type must be canonical: ' + type);
+  }
+  const result = notificationHistoryString_(record.result).toUpperCase();
+  const approvedResults = Object.keys(WORKFLOW_NOTIFICATION_HISTORY_.RESULTS).map(function (key) {
+    return WORKFLOW_NOTIFICATION_HISTORY_.RESULTS[key];
+  });
+  if (type === WORKFLOW_NOTIFICATION_HISTORY_.TYPES.DELIVERY_RESULT) {
+    if (!notificationHistoryString_(record.deliveryId)) {
+      throw new Error('Delivery result delivery ID is required.');
+    }
+    if (!Number.isInteger(Number(record.attemptNumber)) || Number(record.attemptNumber) < 1) {
+      throw new Error('Delivery result attempt number must be a positive integer.');
+    }
+    if (approvedResults.indexOf(result) < 0) {
+      throw new Error('Unsupported delivery result: ' + (result || '(blank)'));
+    }
+    if (record.result !== result) throw new Error('Delivery result must be canonical: ' + result);
+  } else if (type === WORKFLOW_NOTIFICATION_HISTORY_.TYPES.CONFIG_WARNING) {
+    if (result !== WORKFLOW_NOTIFICATION_HISTORY_.RESULTS.FAILED_CONFIGURATION ||
+        !notificationHistoryString_(record.configWarning)) {
+      throw new Error('Configuration warning text and FAILED_CONFIGURATION result are required.');
+    }
+  } else {
+    if (!notificationHistoryString_(record.deliveryId)) {
+      throw new Error('Test delivery ID is required.');
+    }
+    if (!Number.isInteger(Number(record.attemptNumber)) || Number(record.attemptNumber) < 1) {
+      throw new Error('Test delivery attempt number must be a positive integer.');
+    }
+    if (approvedResults.indexOf(result) < 0) {
+      throw new Error('Unsupported test delivery result: ' + (result || '(blank)'));
+    }
+    if (record.result !== result) throw new Error('Test delivery result must be canonical: ' + result);
+  }
+  return record;
+}
+
 function appendWorkflowNotificationHistoryRecords_(records) {
   const supplied = records || [];
   if (!supplied.length) return [];
-  supplied.forEach(function (record) {
-    if ([WORKFLOW_NOTIFICATION_HISTORY_.TYPES.BUSINESS_RESERVATION,
-      WORKFLOW_NOTIFICATION_HISTORY_.TYPES.DELIVERY_PREPARED].indexOf(record.recordType) >= 0) {
-      throw new Error('Pre-send records must use reserveWorkflowNotificationPlan_.');
-    }
-  });
+  supplied.forEach(validateWorkflowNotificationLifecycleRecord_);
   return withDocumentLock_(function () {
     const history = readWorkflowNotificationHistory_(), ids = {};
     history.records.forEach(function (record) { ids[notificationHistoryString_(record.recordId)] = true; });
