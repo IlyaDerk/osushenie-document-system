@@ -1,4 +1,4 @@
-/** Read-only Stage 2 notification preview. No delivery or configuration side effects. */
+/** Read-only notification orchestration. Telegram formatting remains pure. */
 const WORKFLOW_NOTIFICATION_DRY_RUN_TARGET_ = 'DRY_RUN_GROUP_TARGET';
 
 function readWorkflowNotificationDocuments_() {
@@ -93,6 +93,11 @@ function buildWorkflowNotificationDryRun_(options) {
   });
   const eventCounts = { D_MINUS_7: 0, D_MINUS_3: 0, DUE_TODAY: 0, OVERDUE_DAILY: 0 };
   sendResults.forEach(function (candidate) { eventCounts[candidate.event]++; });
+  const model = buildWorkflowNotificationModel_(sendResults);
+  const deliveryPlan = input.telegramPreview === false ? [] : buildTelegramDeliveryPlan_(model, {
+    businessDate: businessDate, target: target,
+    operatorCardUrl: input.operatorCardUrl || '', testMode: false
+  });
   return {
     mode: 'DRY_RUN', businessDate: businessDate,
     generatedAt: input.generatedAt instanceof Date ? input.generatedAt : new Date(),
@@ -109,11 +114,26 @@ function buildWorkflowNotificationDryRun_(options) {
     eventCounts: eventCounts, warningCounts: warningCounts, warnings: warnings,
     skippedReasons: skippedReasons,
     dedup: { newEvents: newEvents, alreadyReserved: alreadyReserved },
-    model: buildWorkflowNotificationModel_(sendResults)
+    model: model,
+    telegramPreview: {
+      target: target, partCount: deliveryPlan.length,
+      parts: deliveryPlan.map(function (delivery) { return {
+        partNumber: delivery.partNumber, length: delivery.messageText.length,
+        hash: delivery.messageHash, text: delivery.messageText
+      }; })
+    }
   };
 }
 
+function workflowOperatorCardUrl_() {
+  const spreadsheet = getSystemSpreadsheet_();
+  const sheet = spreadsheet.getSheetByName(SYSTEM_CONFIG.SHEETS.OPERATOR_CARD.name);
+  if (!sheet) throw new Error('Не найден лист «' + SYSTEM_CONFIG.SHEETS.OPERATOR_CARD.name + '».');
+  return spreadsheet.getUrl() + '#gid=' + sheet.getSheetId();
+}
+
 function dryRunWorkflowNotifications() {
+  const config = requireWorkflowNotificationConfig_(readWorkflowNotificationConfig_(), false);
   assertSystemSheetsStructure_(['DOCUMENTS', 'WORKFLOW_RULES', 'NOTIFICATION_HISTORY']);
   const now = new Date();
   const history = readWorkflowNotificationHistory_();
@@ -121,6 +141,61 @@ function dryRunWorkflowNotifications() {
     documents: readWorkflowNotificationDocuments_(),
     rules: readActiveDocumentWorkflowRules_(), historyRecords: history.records,
     businessDate: workflowNotificationDateOrdinal_(now).key,
-    businessAt: now, generatedAt: now, target: WORKFLOW_NOTIFICATION_DRY_RUN_TARGET_
+    businessAt: now, generatedAt: now, target: config.chatId,
+    operatorCardUrl: workflowOperatorCardUrl_()
   });
+}
+
+function workflowTestHistoryRecord_(delivery, runId, businessDate, result, now) {
+  return buildTestDeliveryRecord_({
+    runId: runId, deliveryId: delivery.deliveryId, timestamp: now,
+    notificationDate: businessDate, channel: delivery.channel, target: delivery.target,
+    result: result.result || result, telegramMessageId: result.telegramMessageId || '',
+    errorCode: result.errorCode || '', errorText: result.errorText || '', attemptNumber: 1,
+    messageHash: delivery.messageHash, messageText: delivery.messageText
+  });
+}
+
+/** Manual-only real Telegram send. It never consults or writes production dedup records. */
+function testSendWorkflowNotifications() {
+  const config = requireWorkflowNotificationConfig_(readWorkflowNotificationConfig_(), true);
+  assertSystemSheetsStructure_(['DOCUMENTS', 'WORKFLOW_RULES', 'NOTIFICATION_HISTORY']);
+  const now = new Date(), businessDate = workflowNotificationDateOrdinal_(now).key;
+  const rules = readActiveDocumentWorkflowRules_();
+  const evaluated = readWorkflowNotificationDocuments_().map(function (document) {
+    return evaluateWorkflowNotification_(document, rules, now);
+  });
+  const model = buildWorkflowNotificationModel_(evaluated);
+  const runId = generateNotificationId_('NOTIFICATION_RUN');
+  const deliveries = buildTelegramDeliveryPlan_(model, { businessDate: businessDate,
+    target: config.chatId, operatorCardUrl: workflowOperatorCardUrl_(), testMode: true });
+  const prepared = deliveries.map(function (delivery) {
+    return workflowTestHistoryRecord_(delivery, runId, businessDate,
+      WORKFLOW_NOTIFICATION_HISTORY_.RESULTS.PREPARED, now);
+  });
+  appendWorkflowNotificationHistoryRecords_(prepared);
+  const outcomes = deliveries.map(function (delivery) {
+    return sendTelegramMessage_(config.botToken, config.chatId, delivery.messageText);
+  });
+  const outcomeRecords = deliveries.map(function (delivery, index) {
+    return workflowTestHistoryRecord_(delivery, runId, businessDate, outcomes[index], new Date());
+  });
+  let historyPersisted = true, historyError = '';
+  try { appendWorkflowNotificationHistoryRecords_(outcomeRecords); }
+  catch (error) {
+    historyPersisted = false;
+    historyError = redactWorkflowNotificationSecret_(error && error.message ? error.message : error,
+      config.botToken);
+  }
+  return {
+    mode: 'TEST_SEND', runId: runId, target: config.chatId, partCount: deliveries.length,
+    historyPersisted: historyPersisted, historyError: historyError,
+    outcomes: outcomes.map(function (outcome, index) { return {
+      deliveryId: deliveries[index].deliveryId, partNumber: index + 1,
+      sent: outcome.sent, result: outcome.result,
+      telegramMessageId: outcome.telegramMessageId, httpStatus: outcome.httpStatus,
+      errorCode: outcome.errorCode, errorText: outcome.errorText,
+      retryEligible: outcome.retryEligible, messageHash: deliveries[index].messageHash
+    }; })
+  };
 }

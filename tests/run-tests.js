@@ -3,7 +3,7 @@ const assert = require('assert');
 const fs = require('fs');
 const vm = require('vm');
 const cp = require('child_process');
-const files = ['SystemCore.gs', 'DocumentArchitectureCore.gs', 'CreateObjectDocuments.gs', 'SyncObjectData.gs', 'ArchiveChangeHistory.gs', 'DocumentWorkflowSchema.gs', 'WorkflowNotifications.gs', 'WorkflowNotificationHistory.gs', 'WorkflowNotificationJobs.gs', 'OperatorCard.gs', 'OperatorCardSave.gs', 'ObjectSheetControls.gs', 'Code.gs', 'WebAppAuth.gs', 'DocumentWebAppServer.gs', 'DocumentArchitectureV2Migration.gs', 'ObjectCardReport.gs', 'ManagerSummaryReport.gs'];
+const files = ['SystemCore.gs', 'DocumentArchitectureCore.gs', 'CreateObjectDocuments.gs', 'SyncObjectData.gs', 'ArchiveChangeHistory.gs', 'DocumentWorkflowSchema.gs', 'WorkflowNotifications.gs', 'WorkflowNotificationHistory.gs', 'TelegramNotifications.gs', 'WorkflowNotificationJobs.gs', 'OperatorCard.gs', 'OperatorCardSave.gs', 'ObjectSheetControls.gs', 'Code.gs', 'WebAppAuth.gs', 'DocumentWebAppServer.gs', 'DocumentArchitectureV2Migration.gs', 'ObjectCardReport.gs', 'ManagerSummaryReport.gs'];
 const source = files.map(f => fs.readFileSync(f, 'utf8')).join('\n');
 let passed = 0;
 function test(name, fn) {
@@ -42,7 +42,9 @@ function baseContext(extra = {}) {
         const map = Object.fromEntries(local.map(part => [part.type, part.value]));
         const asUtc = Date.UTC(Number(map.year), Number(map.month) - 1, Number(map.day), Number(map.hour), Number(map.minute), Number(map.second));
         return new Date(utc - (asUtc - utc));
-      }
+      },
+      DigestAlgorithm: { SHA_256: 'sha256' }, Charset: { UTF_8: 'utf8' },
+      computeDigest(algorithm, text) { return Array.from(require('crypto').createHash(algorithm).update(text, 'utf8').digest()).map(x=>x>127?x-256:x); }
     },
     PropertiesService: {
       getDocumentProperties() {
@@ -2956,6 +2958,118 @@ test('286. test delivery rejects reserved while retaining prepared state', () =>
   assert.equal(rejected.setCalls(),0);
   const accepted=atomicNotificationFixture(), prepared=accepted.ctx.buildTestDeliveryRecord_({recordId:'H2',runId:'R',deliveryId:'D',attemptNumber:1,result:'PREPARED'});
   accepted.ctx.appendWorkflowNotificationHistoryRecords_([prepared]); assert.equal(accepted.setCalls(),1);
+});
+
+function telegramCandidate(extra={}) {
+  return Object.assign({status:'CANDIDATE',documentId:'DOC-1',objectId:'OBJ-1',objectName:'Альфа',
+    documentType:'Акт',documentNumber:'15',documentStatus:'На согласовании',location:'В офисе',
+    transferredAt:new Date('2026-09-08T00:00:00Z'),controlDateKey:'2026-09-15',daysRemaining:7,
+    event:'D_MINUS_7',action:'Передать заказчику'},extra);
+}
+function telegramModel(ctx,candidates) { return ctx.buildWorkflowNotificationModel_(candidates); }
+
+test('287. notification config fails closed and preserves a huge chat ID string', () => {
+  const values={WORKFLOW_NOTIFICATIONS_ENABLED:' TRUE ',WORKFLOW_TG_CHAT_ID:' -10099999999999999999 ',WORKFLOW_TG_BOT_TOKEN:'secret'};
+  const ctx=baseContext({scriptProperties:{getProperty:key=>values[key]}}), config=ctx.readWorkflowNotificationConfig_();
+  assert.equal(config.enabled,true); assert.equal(config.enabledConfigured,true);
+  assert.equal(config.chatId,'-10099999999999999999'); assert.equal(typeof config.chatId,'string');
+  values.WORKFLOW_NOTIFICATIONS_ENABLED='false'; assert.equal(ctx.readWorkflowNotificationConfig_().enabled,false);
+  values.WORKFLOW_NOTIFICATIONS_ENABLED=''; assert.equal(ctx.readWorkflowNotificationConfig_().enabledConfigured,false);
+  values.WORKFLOW_NOTIFICATIONS_ENABLED='yes'; assert.equal(ctx.readWorkflowNotificationConfig_().enabled,false); assert.equal(ctx.readWorkflowNotificationConfig_().enabledConfigured,true);
+});
+test('288. config requirements distinguish dry run and test send without exposing token', () => {
+  const ctx=baseContext();
+  assert.throws(()=>ctx.requireWorkflowNotificationConfig_({chatId:'',botToken:''},false),/CHAT_ID/);
+  assert.doesNotThrow(()=>ctx.requireWorkflowNotificationConfig_({chatId:'group',botToken:'',enabled:false},false));
+  assert.throws(()=>ctx.requireWorkflowNotificationConfig_({chatId:'group',botToken:''},true),/BOT_TOKEN/);
+});
+test('289. formatter preserves literal document numbers and handles a blank number safely', () => {
+  const ctx=baseContext(), candidates=[telegramCandidate({documentId:'D1',documentNumber:'15'}),telegramCandidate({documentId:'D2',documentNumber:'№15'}),telegramCandidate({documentId:'D3',documentNumber:'',action:'не настроено'})];
+  const text=ctx.buildTelegramPhysicalMessages_(telegramModel(ctx,candidates),{businessDate:'2026-09-08',operatorCardUrl:'https://sheet/#gid=7'})[0].text;
+  assert.match(text,/🏗 Объект: Альфа/); assert.match(text,/• Акт — 15\n/); assert.match(text,/• Акт — №15\n/); assert.match(text,/• Акт\n/); assert.doesNotMatch(text,/• Акт — №№15/);
+  assert.match(text,/Передан: 08\.09\.2026/); assert.match(text,/Контроль: 15\.09\.2026/);
+  assert.match(text,/Срок: через 7 дней/); assert.match(text,/Действие: не настроено/); assert.ok(text.endsWith('https://sheet/#gid=7'));
+});
+test('290. deadline wording covers D-3, today and overdue with Russian inflection', () => {
+  const ctx=baseContext(); assert.equal(ctx.telegramDeadlineText_(3),'Срок: через 3 дня');
+  assert.equal(ctx.telegramDeadlineText_(0),'Срок: сегодня'); assert.equal(ctx.telegramDeadlineText_(-1),'Просрочено: 1 день');
+});
+test('291. formatter groups multiple objects deterministically', () => {
+  const ctx=baseContext(), candidates=[telegramCandidate({objectId:'2',objectName:'Бета'}),telegramCandidate({documentId:'D2',objectId:'1',objectName:'Альфа'})];
+  const options={businessDate:'2026-09-08'}, first=ctx.buildTelegramPhysicalMessages_(telegramModel(ctx,candidates),options), second=ctx.buildTelegramPhysicalMessages_(telegramModel(ctx,candidates),options);
+  assert.equal(JSON.stringify(first),JSON.stringify(second)); assert.ok(first[0].text.indexOf('Альфа')<first[0].text.indexOf('Бета'));
+});
+test('292. splitting caps every part, labels final count, repeats context and puts footer last', () => {
+  const ctx=baseContext(), candidates=Array.from({length:30},(_,i)=>telegramCandidate({documentId:'D'+i,documentNumber:String(i),action:'X'.repeat(250)}));
+  const parts=ctx.buildTelegramPhysicalMessages_(telegramModel(ctx,candidates),{businessDate:'2026-09-08',operatorCardUrl:'https://card',testMode:true});
+  assert.ok(parts.length>1); parts.forEach((part,i)=>{assert.ok(part.text.length<=3900); assert.ok(part.text.startsWith('🧪 ТЕСТ')); assert.match(part.text,new RegExp('Часть '+(i+1)+'/'+parts.length)); assert.match(part.text,/🏗 Объект:/);});
+  assert.ok(parts.at(-1).text.includes('https://card')); assert.ok(parts.slice(0,-1).every(p=>!p.text.includes('https://card')));
+});
+test('293. oversized document fails closed instead of creating duplicate delivery references', () => {
+  const ctx=baseContext(), candidate=telegramCandidate({documentId:'DOC-OVERSIZED',objectId:'OBJ-LARGE',action:'Z'.repeat(9000)});
+  assert.throws(()=>ctx.buildTelegramDeliveryPlan_(telegramModel(ctx,[candidate]),{businessDate:'2026-09-08',target:'group'}),error=>{
+    assert.match(error.message,/documentId=DOC-OVERSIZED/); assert.match(error.message,/objectId=OBJ-LARGE/);
+    assert.match(error.message,/length=\d+/); assert.match(error.message,/limit=\d+/); return true;
+  });
+});
+test('294. production empty report has no parts while test empty report remains sendable', () => {
+  const ctx=baseContext(), model={candidateCount:0,objects:[]};
+  assert.equal(ctx.buildTelegramPhysicalMessages_(model,{businessDate:'2026-09-08'}).length,0);
+  const testParts=ctx.buildTelegramPhysicalMessages_(model,{businessDate:'2026-09-08',testMode:true});
+  assert.equal(testParts.length,1); assert.ok(testParts[0].text.startsWith('🧪 ТЕСТ')); assert.match(testParts[0].text,/уведомлений нет/);
+});
+test('295. SHA-256 hashes exact final text and test marker changes it', () => {
+  const ctx=baseContext(), model=telegramModel(ctx,[telegramCandidate()]);
+  assert.equal(ctx.hashTelegramMessage_('same'),ctx.hashTelegramMessage_('same')); assert.notEqual(ctx.hashTelegramMessage_('same'),ctx.hashTelegramMessage_('Same'));
+  const prod=ctx.buildTelegramDeliveryPlan_(model,{businessDate:'2026-09-08',target:'g'}), testPlan=ctx.buildTelegramDeliveryPlan_(model,{businessDate:'2026-09-08',target:'g',testMode:true});
+  assert.equal(prod[0].messageHash,ctx.hashTelegramMessage_(prod[0].messageText)); assert.notEqual(prod[0].messageHash,testPlan[0].messageHash);
+});
+test('296. Telegram transport success uses string chat and exactly one plain JSON request', () => {
+  let calls=0, options; const ctx=baseContext(); ctx.UrlFetchApp={fetch(url,input){calls++;options=input;return {getResponseCode:()=>200,getContentText:()=>'{"ok":true,"result":{"message_id":42}}'};}};
+  const result=ctx.sendTelegramMessage_('token','-10099999999999999999','hello'); assert.equal(result.result,'SENT'); assert.equal(result.telegramMessageId,'42'); assert.equal(calls,1);
+  assert.equal(JSON.parse(options.payload).chat_id,'-10099999999999999999'); assert.equal(JSON.parse(options.payload).parse_mode,undefined);
+});
+test('297. Telegram explicit response classifications are normalized', () => {
+  [[429,'FAILED_TECHNICAL',true],[500,'FAILED_TECHNICAL',true],[400,'FAILED_PERMANENT',false],[401,'FAILED_CONFIGURATION',false],[403,'FAILED_CONFIGURATION',false]].forEach(([status,result,retry])=>{
+    const ctx=baseContext();ctx.UrlFetchApp={fetch:()=>({getResponseCode:()=>status,getContentText:()=>JSON.stringify({ok:false,error_code:status,description:'failure'})})};
+    const outcome=ctx.sendTelegramMessage_('token','group','text'); assert.equal(outcome.result,result); assert.equal(outcome.retryEligible,retry);
+  });
+});
+test('298. network and ambiguous success outcomes are unknown and never retried', () => {
+  const token='123456:SECRET_TEST_TOKEN', ctx=baseContext(); let calls=0;ctx.UrlFetchApp={fetch(url){calls++;throw new Error('timeout '+url);}};
+  const failure=ctx.sendTelegramMessage_(token,'group','text'); assert.equal(failure.result,'UNKNOWN_DELIVERY_OUTCOME'); assert.equal(failure.retryEligible,false); assert.doesNotMatch(failure.errorText,new RegExp(token)); assert.match(failure.errorText,/\[REDACTED\]/); assert.equal(calls,1);
+  ctx.UrlFetchApp={fetch:()=>({getResponseCode:()=>200,getContentText:()=>'{bad'})}; assert.equal(ctx.sendTelegramMessage_(token,'g','t').result,'UNKNOWN_DELIVERY_OUTCOME');
+  ctx.UrlFetchApp={fetch:()=>({getResponseCode:()=>500,getContentText:()=>'{bad'})}; assert.equal(ctx.sendTelegramMessage_(token,'g','t').result,'FAILED_TECHNICAL');
+});
+test('299. dry-run preview uses injected target, exact hashes, and no test marker', () => {
+  const ctx=baseContext(), at=notificationDate(ctx,'2026-09-08T12:00:00Z'), doc=notificationDocument(ctx);
+  const result=ctx.buildWorkflowNotificationDryRun_({documents:[doc],rules:[notificationRule()],historyRecords:[],businessDate:'2026-09-08',businessAt:at,target:'-100GROUP',operatorCardUrl:'https://card'});
+  assert.equal(result.telegramPreview.target,'-100GROUP'); assert.equal(result.telegramPreview.partCount,1); assert.equal(result.telegramPreview.parts[0].hash,ctx.hashTelegramMessage_(result.telegramPreview.parts[0].text)); assert.doesNotMatch(result.telegramPreview.parts[0].text,/🧪 ТЕСТ/);
+});
+test('300. test-send writes only TEST_DELIVERY prepared/outcome and ignores disabled switch', () => {
+  const values={WORKFLOW_NOTIFICATIONS_ENABLED:'false',WORKFLOW_TG_CHAT_ID:'group',WORKFLOW_TG_BOT_TOKEN:'secret'}, ctx=baseContext({scriptProperties:{getProperty:k=>values[k]}}), batches=[]; let fetches=0, serial=0;
+  ctx.assertSystemSheetsStructure_=()=>{}; ctx.readWorkflowNotificationDocuments_=()=>[]; ctx.readActiveDocumentWorkflowRules_=()=>[]; ctx.workflowOperatorCardUrl_=()=>'https://card'; ctx.generateNotificationId_=prefix=>prefix+'-'+(++serial);
+  ctx.appendWorkflowNotificationHistoryRecords_=records=>{batches.push(records);return records;}; ctx.UrlFetchApp={fetch(){fetches++;return {getResponseCode:()=>200,getContentText:()=>'{"ok":true,"result":{"message_id":1}}'};}};
+  const result=ctx.testSendWorkflowNotifications(); assert.equal(fetches,1); assert.equal(result.outcomes[0].result,'SENT'); assert.equal(result.historyPersisted,true);
+  assert.equal(batches.length,2); assert.ok(batches.flat().every(r=>r.recordType==='TEST_DELIVERY')); assert.equal(batches[0][0].result,'PREPARED'); assert.equal(batches[1][0].result,'SENT');
+  assert.doesNotMatch(JSON.stringify(result),/secret/); assert.doesNotMatch(JSON.stringify(batches),/secret/);
+});
+test('301. prepared-history failure prevents fetch and outcome-history failure never resends', () => {
+  function fixture(failCall){const values={WORKFLOW_TG_CHAT_ID:'g',WORKFLOW_TG_BOT_TOKEN:'secret'},ctx=baseContext({scriptProperties:{getProperty:k=>values[k]}});let writes=0,fetches=0,serial=0;ctx.assertSystemSheetsStructure_=()=>{};ctx.readWorkflowNotificationDocuments_=()=>[];ctx.readActiveDocumentWorkflowRules_=()=>[];ctx.workflowOperatorCardUrl_=()=>'';ctx.generateNotificationId_=p=>p+(++serial);ctx.appendWorkflowNotificationHistoryRecords_=()=>{writes++;if(writes===failCall)throw new Error('history secret');};ctx.UrlFetchApp={fetch(){fetches++;return {getResponseCode:()=>200,getContentText:()=>'{"ok":true,"result":{"message_id":1}}'};}};return {ctx,fetches:()=>fetches};}
+  const before=fixture(1); assert.throws(()=>before.ctx.testSendWorkflowNotifications(),/history secret/); assert.equal(before.fetches(),0);
+  const after=fixture(2), result=after.ctx.testSendWorkflowNotifications(); assert.equal(after.fetches(),1); assert.equal(result.historyPersisted,false); assert.equal(result.outcomes[0].result,'SENT');
+});
+test('302. Stage 3 scope contains transport but no triggers, retries, scheduler or document writes', () => {
+  const text=['TelegramNotifications.gs','WorkflowNotificationJobs.gs'].map(f=>fs.readFileSync(f,'utf8')).join('\n');
+  assert.match(text,/UrlFetchApp\.fetch/); assert.match(text,/PropertiesService\.getScriptProperties/);
+  assert.doesNotMatch(text,/ScriptApp|newTrigger|setValue\(|setValues\(|sleep\(|retryWorkflow|dailyWorkflow/);
+});
+test('303. oversized test document fails before history and Telegram side effects', () => {
+  const values={WORKFLOW_TG_CHAT_ID:'group',WORKFLOW_TG_BOT_TOKEN:'secret'},ctx=baseContext({scriptProperties:{getProperty:k=>values[k]}});let historyWrites=0,fetches=0;
+  ctx.assertSystemSheetsStructure_=()=>{};ctx.readWorkflowNotificationDocuments_=()=>[{}];ctx.readActiveDocumentWorkflowRules_=()=>[];
+  ctx.evaluateWorkflowNotification_=()=>telegramCandidate({documentId:'DOC-TOO-LARGE',objectId:'OBJ-LARGE',action:'X'.repeat(9000)});
+  ctx.workflowOperatorCardUrl_=()=>'';ctx.appendWorkflowNotificationHistoryRecords_=()=>{historyWrites++;};ctx.UrlFetchApp={fetch(){fetches++;}};
+  assert.throws(()=>ctx.testSendWorkflowNotifications(),/documentId=DOC-TOO-LARGE/);assert.equal(historyWrites,0);assert.equal(fetches,0);
 });
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);
