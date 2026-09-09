@@ -17,7 +17,9 @@ is intentionally independent of the production switch.
 Reports are deterministic plain text grouped by the Stage 1 object model. Physical
 messages are capped at 3900 JavaScript characters, receive final multipart headings,
 and only the last part receives the Operator Card link. SHA-256 is calculated over the
-exact final physical text.
+exact final physical text. Object blocks may split only between documents. A document
+block that cannot fit a physical message fails closed before history or network effects;
+one business event is therefore never referenced by multiple physical deliveries.
 
 ## Test delivery lifecycle
 

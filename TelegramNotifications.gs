@@ -68,7 +68,7 @@ function formatTelegramDocumentBlock_(candidate) {
   const type = String(candidate.documentType || '').trim() || 'Документ';
   const number = String(candidate.documentNumber || '').trim();
   return [
-    '• ' + type + (number ? ' — №' + number : ''),
+    '• ' + type + (number ? ' — ' + number : ''),
     '  Статус: ' + (String(candidate.documentStatus || '').trim() || 'не указан'),
     '  Где: ' + (String(candidate.location || '').trim() || 'не указано'),
     '  Передан: ' + telegramCandidateDate_(candidate.transferredAt),
@@ -92,12 +92,6 @@ function telegramHeader_(businessDate, testMode, partNumber, partCount) {
   return lines.join('\n');
 }
 
-function telegramSplitText_(text, maximum) {
-  const chunks = [], source = String(text || '');
-  for (let start = 0; start < source.length; start += maximum) chunks.push(source.slice(start, start + maximum));
-  return chunks;
-}
-
 /** Pure deterministic formatter/splitter. */
 function buildTelegramPhysicalMessages_(model, options) {
   const input = options || {}, testMode = input.testMode === true;
@@ -119,10 +113,14 @@ function buildTelegramPhysicalMessages_(model, options) {
     }
     documents.forEach(function (documentText, index) {
       const block = heading + '\n\n' + documentText;
-      const references = [object.documents[index]];
-      telegramSplitText_(block, bodyLimit).forEach(function (chunk) {
-        segments.push({ text: chunk, references: references });
-      });
+      const candidate = object.documents[index];
+      if (block.length > bodyLimit) {
+        throw new Error('Telegram document block exceeds safe limit: documentId=' +
+          String(candidate.documentId || '').trim() + ', objectId=' +
+          String(candidate.objectId || '').trim() + ', length=' + block.length +
+          ', limit=' + bodyLimit + '.');
+      }
+      segments.push({ text: block, references: [candidate] });
     });
   });
   if (!segments.length) segments = [{ text: 'На текущую дату уведомлений нет.', references: [] }];

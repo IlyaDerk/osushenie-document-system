@@ -2983,10 +2983,10 @@ test('288. config requirements distinguish dry run and test send without exposin
   assert.doesNotThrow(()=>ctx.requireWorkflowNotificationConfig_({chatId:'group',botToken:'',enabled:false},false));
   assert.throws(()=>ctx.requireWorkflowNotificationConfig_({chatId:'group',botToken:''},true),/BOT_TOKEN/);
 });
-test('289. formatter includes required fields, Moscow dates, fallback action and safe blank number', () => {
-  const ctx=baseContext(), candidate=telegramCandidate({documentNumber:'',action:'не настроено'});
-  const text=ctx.buildTelegramPhysicalMessages_(telegramModel(ctx,[candidate]),{businessDate:'2026-09-08',operatorCardUrl:'https://sheet/#gid=7'})[0].text;
-  assert.match(text,/🏗 Объект: Альфа/); assert.match(text,/• Акт\n/); assert.doesNotMatch(text,/№\s*\n/);
+test('289. formatter preserves literal document numbers and handles a blank number safely', () => {
+  const ctx=baseContext(), candidates=[telegramCandidate({documentId:'D1',documentNumber:'15'}),telegramCandidate({documentId:'D2',documentNumber:'№15'}),telegramCandidate({documentId:'D3',documentNumber:'',action:'не настроено'})];
+  const text=ctx.buildTelegramPhysicalMessages_(telegramModel(ctx,candidates),{businessDate:'2026-09-08',operatorCardUrl:'https://sheet/#gid=7'})[0].text;
+  assert.match(text,/🏗 Объект: Альфа/); assert.match(text,/• Акт — 15\n/); assert.match(text,/• Акт — №15\n/); assert.match(text,/• Акт\n/); assert.doesNotMatch(text,/• Акт — №№15/);
   assert.match(text,/Передан: 08\.09\.2026/); assert.match(text,/Контроль: 15\.09\.2026/);
   assert.match(text,/Срок: через 7 дней/); assert.match(text,/Действие: не настроено/); assert.ok(text.endsWith('https://sheet/#gid=7'));
 });
@@ -3005,10 +3005,12 @@ test('292. splitting caps every part, labels final count, repeats context and pu
   assert.ok(parts.length>1); parts.forEach((part,i)=>{assert.ok(part.text.length<=3900); assert.ok(part.text.startsWith('🧪 ТЕСТ')); assert.match(part.text,new RegExp('Часть '+(i+1)+'/'+parts.length)); assert.match(part.text,/🏗 Объект:/);});
   assert.ok(parts.at(-1).text.includes('https://card')); assert.ok(parts.slice(0,-1).every(p=>!p.text.includes('https://card')));
 });
-test('293. oversized document is split without loss and remains within limit', () => {
-  const ctx=baseContext(), marker='UNIQUE_END', candidate=telegramCandidate({action:'Z'.repeat(9000)+marker});
-  const parts=ctx.buildTelegramPhysicalMessages_(telegramModel(ctx,[candidate]),{businessDate:'2026-09-08'});
-  assert.ok(parts.length>=3); assert.ok(parts.every(p=>p.text.length<=3900)); assert.ok(parts.some(p=>p.text.includes(marker)));
+test('293. oversized document fails closed instead of creating duplicate delivery references', () => {
+  const ctx=baseContext(), candidate=telegramCandidate({documentId:'DOC-OVERSIZED',objectId:'OBJ-LARGE',action:'Z'.repeat(9000)});
+  assert.throws(()=>ctx.buildTelegramDeliveryPlan_(telegramModel(ctx,[candidate]),{businessDate:'2026-09-08',target:'group'}),error=>{
+    assert.match(error.message,/documentId=DOC-OVERSIZED/); assert.match(error.message,/objectId=OBJ-LARGE/);
+    assert.match(error.message,/length=\d+/); assert.match(error.message,/limit=\d+/); return true;
+  });
 });
 test('294. production empty report has no parts while test empty report remains sendable', () => {
   const ctx=baseContext(), model={candidateCount:0,objects:[]};
@@ -3061,6 +3063,13 @@ test('302. Stage 3 scope contains transport but no triggers, retries, scheduler 
   const text=['TelegramNotifications.gs','WorkflowNotificationJobs.gs'].map(f=>fs.readFileSync(f,'utf8')).join('\n');
   assert.match(text,/UrlFetchApp\.fetch/); assert.match(text,/PropertiesService\.getScriptProperties/);
   assert.doesNotMatch(text,/ScriptApp|newTrigger|setValue\(|setValues\(|sleep\(|retryWorkflow|dailyWorkflow/);
+});
+test('303. oversized test document fails before history and Telegram side effects', () => {
+  const values={WORKFLOW_TG_CHAT_ID:'group',WORKFLOW_TG_BOT_TOKEN:'secret'},ctx=baseContext({scriptProperties:{getProperty:k=>values[k]}});let historyWrites=0,fetches=0;
+  ctx.assertSystemSheetsStructure_=()=>{};ctx.readWorkflowNotificationDocuments_=()=>[{}];ctx.readActiveDocumentWorkflowRules_=()=>[];
+  ctx.evaluateWorkflowNotification_=()=>telegramCandidate({documentId:'DOC-TOO-LARGE',objectId:'OBJ-LARGE',action:'X'.repeat(9000)});
+  ctx.workflowOperatorCardUrl_=()=>'';ctx.appendWorkflowNotificationHistoryRecords_=()=>{historyWrites++;};ctx.UrlFetchApp={fetch(){fetches++;}};
+  assert.throws(()=>ctx.testSendWorkflowNotifications(),/documentId=DOC-TOO-LARGE/);assert.equal(historyWrites,0);assert.equal(fetches,0);
 });
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);
