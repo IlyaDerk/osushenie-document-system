@@ -282,20 +282,26 @@ function persistWorkflowResultLocally_(record, botToken) {
 
 function workflowSendPreparedDeliveries_(deliveries, config, attempt) {
   const outcomes = [], unresolved = [];
-  (deliveries || []).forEach(function (delivery) {
+  const prepared = (deliveries || []).map(function (delivery) {
+    const target = notificationHistoryString_(delivery && delivery.target);
+    if (!target) throw new Error('Prepared delivery Telegram target is required.');
+    return { delivery: delivery, target: target };
+  });
+  prepared.forEach(function (item) {
+    const delivery = item.delivery;
     const resultRecordId = generateNotificationId_('NOTIFICATION_HISTORY');
-    const outcome = sendTelegramMessage_(config.botToken, config.chatId, delivery.messageText);
+    const outcome = sendTelegramMessage_(config.botToken, item.target, delivery.messageText);
     const record = workflowDeliveryResult_(delivery, outcome, resultRecordId,
       attempt, new Date(), config.botToken);
     const persistence = persistWorkflowResultLocally_(record, config.botToken);
-    const item = {
+    const outcomeItem = {
       deliveryId: delivery.deliveryId, result: outcome.result,
       telegramMessageId: outcome.telegramMessageId || '', historyPersisted: persistence.persisted,
       historyAttempts: persistence.attempts,
       historyError: persistence.persisted ? '' : persistence.error
     };
-    outcomes.push(item);
-    if (!persistence.persisted) unresolved.push(item);
+    outcomes.push(outcomeItem);
+    if (!persistence.persisted) unresolved.push(outcomeItem);
   });
   return { outcomes: outcomes, unresolved: unresolved };
 }
