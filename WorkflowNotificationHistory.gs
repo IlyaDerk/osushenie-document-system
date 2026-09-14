@@ -297,6 +297,7 @@ function reserveWorkflowNotificationPlan_(input, deliveryBuilder) {
         history.context.config.dataStartRow);
       history.context.sheet.getRange(start, 1, rows.length,
         history.context.headers.length).setValues(rows);
+      SpreadsheetApp.flush();
     }
     return { runId: plan.runId, accepted: accepted, alreadyReserved: alreadyReserved,
       businessReservations: plan.businessReservations, deliveries: plan.deliveries };
@@ -373,6 +374,63 @@ function appendWorkflowNotificationHistoryRecords_(records) {
       history.context.config.dataStartRow);
     history.context.sheet.getRange(start, 1, rows.length,
       history.context.headers.length).setValues(rows);
+    SpreadsheetApp.flush();
     return supplied.slice();
+  });
+}
+
+/** Idempotent, locked persistence for a transport result with a caller-fixed ID. */
+function persistWorkflowNotificationResultIdempotently_(record) {
+  validateWorkflowNotificationLifecycleRecord_(record);
+  if (record.recordType !== WORKFLOW_NOTIFICATION_HISTORY_.TYPES.DELIVERY_RESULT) {
+    throw new Error('Only DELIVERY_RESULT supports idempotent result persistence.');
+  }
+  return withDocumentLock_(function () {
+    const history = readWorkflowNotificationHistory_();
+    const exists = history.records.some(function (current) {
+      return notificationHistoryString_(current.recordId) === record.recordId;
+    });
+    if (exists) return { persisted: true, alreadyExisted: true, record: record };
+    const row = notificationHistoryRecordToRow_(record, history.context);
+    const start = Math.max(history.context.sheet.getLastRow() + 1,
+      history.context.config.dataStartRow);
+    history.context.sheet.getRange(start, 1, 1,
+      history.context.headers.length).setValues([row]);
+    SpreadsheetApp.flush();
+    return { persisted: true, alreadyExisted: false, record: record };
+  });
+}
+
+/** Rechecks attempt 2 under lock, then durably reserves either retry or stale skip. */
+function reserveWorkflowNotificationRetryAttempt_(record) {
+  if (!record || Number(record.attemptNumber) !== 2) {
+    throw new Error('Retry reservation must use attempt 2.');
+  }
+  const type = notificationHistoryString_(record.recordType).toUpperCase();
+  if (type === WORKFLOW_NOTIFICATION_HISTORY_.TYPES.DELIVERY_PREPARED) {
+    record = buildDeliveryPreparedRecord_(record);
+  } else if (type === WORKFLOW_NOTIFICATION_HISTORY_.TYPES.DELIVERY_RESULT) {
+    record = buildDeliveryResultRecord_(record);
+    validateWorkflowNotificationLifecycleRecord_(record);
+  } else {
+    throw new Error('Retry reservation must be DELIVERY_PREPARED or DELIVERY_RESULT.');
+  }
+  return withDocumentLock_(function () {
+    const history = readWorkflowNotificationHistory_();
+    const occupied = history.records.some(function (current) {
+      return notificationHistoryString_(current.deliveryId) === record.deliveryId &&
+        Number(current.attemptNumber) === 2 &&
+        [WORKFLOW_NOTIFICATION_HISTORY_.TYPES.DELIVERY_PREPARED,
+          WORKFLOW_NOTIFICATION_HISTORY_.TYPES.DELIVERY_RESULT].indexOf(
+            notificationHistoryString_(current.recordType).toUpperCase()) >= 0;
+    });
+    if (occupied) return { reserved: false, reason: 'ATTEMPT_2_ALREADY_EXISTS' };
+    const row = notificationHistoryRecordToRow_(record, history.context);
+    const start = Math.max(history.context.sheet.getLastRow() + 1,
+      history.context.config.dataStartRow);
+    history.context.sheet.getRange(start, 1, 1,
+      history.context.headers.length).setValues([row]);
+    SpreadsheetApp.flush();
+    return { reserved: true, record: record };
   });
 }

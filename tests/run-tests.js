@@ -2873,10 +2873,11 @@ test('273. folding exposes business and delivery outcome state while ignoring te
   assert.equal(state.deliveries.X.failedTechnical,true); assert.equal(state.deliveries.X.latestAttempt,2); assert.equal(state.deliveries.X.retryAlreadyAttempted,true);
 });
 function atomicNotificationFixture(existing=[]) {
-  const ctx=baseContext(), headers=Array.from(vm.runInContext('SYSTEM_CONFIG.SHEETS.NOTIFICATION_HISTORY.requiredHeaders',ctx)); let rows=[], setCalls=0;
+  let flushCalls=0;
+  const ctx=baseContext({SpreadsheetApp:{flush(){flushCalls++;}}}), headers=Array.from(vm.runInContext('SYSTEM_CONFIG.SHEETS.NOTIFICATION_HISTORY.requiredHeaders',ctx)); let rows=[], setCalls=0;
   const context={headers,headerMap:Object.fromEntries(headers.map((h,i)=>[h,i+1])),config:{dataStartRow:3},sheet:{getLastRow:()=>existing.length+2,getRange:()=>({setValues(v){setCalls++;rows=v;},getValues:()=>[]})}};
   ctx.withDocumentLock_=fn=>fn(); ctx.readWorkflowNotificationHistory_=()=>({context,records:existing});
-  return {ctx,rows:()=>rows,setCalls:()=>setCalls};
+  return {ctx,rows:()=>rows,setCalls:()=>setCalls,flushCalls:()=>flushCalls};
 }
 test('274. atomic reservation writes reservations and prepared deliveries in one batch', () => {
   const f=atomicNotificationFixture(), c={documentId:'D',notificationDate:'2026-09-08',event:'DUE_TODAY',channel:'TELEGRAM',target:'T'};
@@ -2901,9 +2902,9 @@ test('277. dry-run planner previews dedup, aggregation and grouped model without
   const result=ctx.buildWorkflowNotificationDryRun_({documents:[doc],rules:[notificationRule()],historyRecords:[old],businessDate:'2026-09-08',businessAt:at,generatedAt:at});
   assert.equal(result.mode,'DRY_RUN'); assert.equal(result.counts.alreadyReserved,1); assert.equal(result.counts.wouldSend,0); assert.equal(result.model.candidateCount,0); assert.equal(JSON.stringify(doc),before);
 });
-test('278. Stage 2 adds no transport, retry, trigger, or properties configuration', () => {
-  const text=['WorkflowNotificationHistory.gs','WorkflowNotificationJobs.gs'].map(f=>fs.readFileSync(f,'utf8')).join('\n');
-  assert.doesNotMatch(text,/UrlFetchApp|api\.telegram|newTrigger|retry worker|bot token|getScriptProperties/iu);
+test('278. history repository contains no transport, triggers, or properties configuration', () => {
+  const text=fs.readFileSync('WorkflowNotificationHistory.gs','utf8');
+  assert.doesNotMatch(text,/UrlFetchApp|api\.telegram|newTrigger|getScriptProperties/iu);
 });
 test('279. aggregated workflow-cycle warning preserves deterministic affected identities', () => {
   const ctx=baseContext(), business='2026-09-08T12:00:00Z';
@@ -3059,10 +3060,10 @@ test('301. prepared-history failure prevents fetch and outcome-history failure n
   const before=fixture(1); assert.throws(()=>before.ctx.testSendWorkflowNotifications(),/history secret/); assert.equal(before.fetches(),0);
   const after=fixture(2), result=after.ctx.testSendWorkflowNotifications(); assert.equal(after.fetches(),1); assert.equal(result.historyPersisted,false); assert.equal(result.outcomes[0].result,'SENT');
 });
-test('302. Stage 3 scope contains transport but no triggers, retries, scheduler or document writes', () => {
+test('302. transport stays isolated and production jobs do not write document rows', () => {
   const text=['TelegramNotifications.gs','WorkflowNotificationJobs.gs'].map(f=>fs.readFileSync(f,'utf8')).join('\n');
   assert.match(text,/UrlFetchApp\.fetch/); assert.match(text,/PropertiesService\.getScriptProperties/);
-  assert.doesNotMatch(text,/ScriptApp|newTrigger|setValue\(|setValues\(|sleep\(|retryWorkflow|dailyWorkflow/);
+  assert.doesNotMatch(fs.readFileSync('WorkflowNotificationJobs.gs','utf8'),/setValue\(|setValues\(|sleep\(/);
 });
 test('303. oversized test document fails before history and Telegram side effects', () => {
   const values={WORKFLOW_TG_CHAT_ID:'group',WORKFLOW_TG_BOT_TOKEN:'secret'},ctx=baseContext({scriptProperties:{getProperty:k=>values[k]}});let historyWrites=0,fetches=0;
@@ -3070,6 +3071,129 @@ test('303. oversized test document fails before history and Telegram side effect
   ctx.evaluateWorkflowNotification_=()=>telegramCandidate({documentId:'DOC-TOO-LARGE',objectId:'OBJ-LARGE',action:'X'.repeat(9000)});
   ctx.workflowOperatorCardUrl_=()=>'';ctx.appendWorkflowNotificationHistoryRecords_=()=>{historyWrites++;};ctx.UrlFetchApp={fetch(){fetches++;}};
   assert.throws(()=>ctx.testSendWorkflowNotifications(),/documentId=DOC-TOO-LARGE/);assert.equal(historyWrites,0);assert.equal(fetches,0);
+});
+
+test('304. disabled daily and retry are immediate property-only no-ops', () => {
+  for (const enabled of ['false','','invalid']) {
+    const values={WORKFLOW_NOTIFICATIONS_ENABLED:enabled,WORKFLOW_TG_BOT_TOKEN:'secret'};
+    const ctx=baseContext({scriptProperties:{getProperty:k=>values[k]}}); let sideEffects=0;
+    ctx.assertSystemSheetsStructure_=ctx.readWorkflowNotificationDocuments_=ctx.readWorkflowNotificationHistory_=()=>{sideEffects++;throw new Error('must not run');};
+    assert.deepEqual(Object.assign({},ctx.runWorkflowNotificationsDaily()),{mode:'PRODUCTION',status:'DISABLED'});
+    assert.equal(sideEffects,0);
+  }
+  const ctx=baseContext(); let reads=0; ctx.readWorkflowNotificationHistory_=()=>{reads++;};
+  assert.equal(ctx.retryWorkflowNotificationDeliveries().status,'DISABLED'); assert.equal(reads,0);
+});
+test('305. atomic production reservation flushes exactly once after its single write', () => {
+  const f=atomicNotificationFixture(), c={documentId:'D',notificationDate:'2026-09-08',event:'DUE_TODAY',channel:'TELEGRAM',target:'T'};
+  f.ctx.reserveWorkflowNotificationPlan_({runId:'R',businessCandidates:[c]},accepted=>({businessReservations:accepted.map(x=>Object.assign({},x,{recordId:'H1',runId:'R',deliveryId:'X'})),deliveries:[{recordId:'H2',runId:'R',deliveryId:'X',attemptNumber:1,channel:'TELEGRAM',target:'T',messageText:'exact',messageHash:'hash'}]}));
+  assert.equal(f.setCalls(),1); assert.equal(f.flushCalls(),1);
+});
+test('306. idempotent result persistence recognizes a caller-fixed record ID', () => {
+  const seed=baseContext().buildDeliveryResultRecord_({recordId:'FIXED',runId:'R',deliveryId:'D',attemptNumber:1,result:'SENT'});
+  const existing=atomicNotificationFixture([seed]);
+  assert.equal(existing.ctx.persistWorkflowNotificationResultIdempotently_(seed).alreadyExisted,true);
+  assert.equal(existing.setCalls(),0); assert.equal(existing.flushCalls(),0);
+  const fresh=atomicNotificationFixture();
+  assert.equal(fresh.ctx.persistWorkflowNotificationResultIdempotently_(seed).alreadyExisted,false);
+  assert.equal(fresh.setCalls(),1); assert.equal(fresh.flushCalls(),1);
+});
+test('307. local result retries reuse one record and never repeat Telegram transport', () => {
+  const ctx=baseContext(); let persists=0, fetches=0, seen=[];
+  ctx.generateNotificationId_=()=> 'FIXED-RESULT';
+  ctx.sendTelegramMessage_=()=>{fetches++;return {result:'SENT',telegramMessageId:'1'};};
+  ctx.persistWorkflowNotificationResultIdempotently_=record=>{persists++;seen.push(record.recordId);if(persists<3)throw new Error('write failed');};
+  const result=ctx.workflowSendPreparedDeliveries_([{runId:'R',deliveryId:'D',notificationDate:'2026-09-08',channel:'TELEGRAM',target:'T',messageText:'exact',messageHash:'hash'}],{botToken:'secret',chatId:'T'},1);
+  assert.equal(fetches,1); assert.equal(persists,3); assert.deepEqual(seen,['FIXED-RESULT','FIXED-RESULT','FIXED-RESULT']); assert.equal(result.unresolved.length,0);
+});
+test('308. exhausted result persistence is structured and does not resend Telegram', () => {
+  const ctx=baseContext(); let fetches=0; ctx.generateNotificationId_=()=> 'FIXED';
+  ctx.sendTelegramMessage_=()=>{fetches++;return {result:'SENT',telegramMessageId:'1'};};
+  ctx.persistWorkflowNotificationResultIdempotently_=()=>{throw new Error('secret unavailable');};
+  const result=ctx.workflowSendPreparedDeliveries_([{runId:'R',deliveryId:'D',notificationDate:'2026-09-08',channel:'TELEGRAM',target:'T',messageText:'exact',messageHash:'hash'}],{botToken:'secret',chatId:'T'},1);
+  assert.equal(fetches,1); assert.equal(result.unresolved.length,1); assert.equal(result.unresolved[0].historyAttempts,3); assert.doesNotMatch(JSON.stringify(result),/secret/);
+});
+test('309. retry eligibility is technical-only, due after 60 minutes, and blocks attempt 2', () => {
+  const ctx=baseContext(), now=notificationDate(ctx,'2026-09-09T12:00:00Z'), base={runId:'R',deliveryId:'D',channel:'TELEGRAM',target:'T',notificationDate:'2026-09-08',messageText:'exact',messageHash:'hash'};
+  const prepared=ctx.buildDeliveryPreparedRecord_(Object.assign({recordId:'P',timestamp:notificationDate(ctx,'2026-09-09T09:00:00Z'),attemptNumber:1},base));
+  const failed=ctx.buildDeliveryResultRecord_(Object.assign({recordId:'F',timestamp:notificationDate(ctx,'2026-09-09T10:59:59Z'),attemptNumber:1,result:'FAILED_TECHNICAL'},base));
+  assert.equal(ctx.workflowRetryCandidates_([prepared,failed],now).length,1);
+  failed.timestamp=notificationDate(ctx,'2026-09-09T11:01:00Z'); assert.equal(ctx.workflowRetryCandidates_([prepared,failed],now).length,0);
+  failed.timestamp=notificationDate(ctx,'2026-09-09T10:00:00Z'); const second=ctx.buildDeliveryPreparedRecord_(Object.assign({recordId:'P2',attemptNumber:2},base));
+  assert.equal(ctx.workflowRetryCandidates_([prepared,failed,second],now).length,0);
+  const unknown=ctx.buildDeliveryResultRecord_(Object.assign({recordId:'U',attemptNumber:1,result:'UNKNOWN_DELIVERY_OUTCOME'},base));
+  assert.equal(ctx.workflowRetryCandidates_([prepared,failed,unknown],now).length,0);
+});
+test('310. stale validation covers approved state failures but missing rule and blank action remain valid', () => {
+  const ctx=baseContext(), doc=notificationDocument(ctx,{documentStatus:'На подготовке'}), reservation={documentId:doc.documentId,documentStatus:'На подготовке'};
+  assert.deepEqual(Array.from(ctx.workflowRetryStaleReasons_([reservation],[doc],[])),[]);
+  assert.deepEqual(Array.from(ctx.workflowRetryStaleReasons_([reservation],[doc],[notificationRule({action:''})])),[]);
+  assert.match(ctx.workflowRetryStaleReasons_([reservation],[],[]).join(','),/MISSING_DOCUMENT/);
+  assert.match(ctx.workflowRetryStaleReasons_([reservation],[doc,doc],[]).join(','),/DUPLICATE/);
+  assert.match(ctx.workflowRetryStaleReasons_([reservation],[Object.assign({},doc,{recordStatus:'Архивная'})],[]).join(','),/INACTIVE/);
+  assert.match(ctx.workflowRetryStaleReasons_([reservation],[Object.assign({},doc,{documentStatus:'Подписан с обеих сторон'})],[]).join(','),/TERMINAL|STATUS_CHANGED/);
+  assert.match(ctx.workflowRetryStaleReasons_([reservation],[Object.assign({},doc,{documentLocation:'У заказчика'})],[]).join(','),/LOCATION/);
+  assert.match(ctx.workflowRetryStaleReasons_([reservation],[Object.assign({},doc,{transferredAt:''})],[]).join(','),/TRANSFER_BLANK/);
+  assert.match(ctx.workflowRetryStaleReasons_([reservation],[doc],[notificationRule({notify:'Нет'})]).join(','),/RULE_NOTIFY_NO/);
+  assert.match(ctx.workflowRetryStaleReasons_([reservation],[doc],[notificationRule({notify:''})]).join(','),/RULE_NOTIFY_INVALID/);
+  assert.match(ctx.workflowRetryStaleReasons_([reservation],[doc],[notificationRule(),notificationRule({id:'R2'})]).join(','),/RULE_AMBIGUOUS/);
+});
+test('311. whole stale multipart reservation creates one attempt-2 skip and no fetch', () => {
+  const ctx=baseContext(), old=notificationDate(ctx,'2020-01-01T00:00:00Z'), prepared={recordId:'P',recordType:'DELIVERY_PREPARED',runId:'R',deliveryId:'D',timestamp:old,notificationDate:'2026-09-08',channel:'TELEGRAM',target:'T',result:'PREPARED',attemptNumber:1,messageHash:'hash',messageText:'ORIGINAL'};
+  const failure={recordId:'F',recordType:'DELIVERY_RESULT',runId:'R',deliveryId:'D',timestamp:old,channel:'TELEGRAM',target:'T',result:'FAILED_TECHNICAL',attemptNumber:1};
+  const reservations=['A','B'].map(id=>({recordId:'R'+id,recordType:'BUSINESS_RESERVATION',runId:'R',deliveryId:'D',documentId:id,documentStatus:'На подготовке',notificationDate:'2026-09-08',event:'DUE_TODAY',channel:'TELEGRAM',target:'T'}));
+  const values={WORKFLOW_NOTIFICATIONS_ENABLED:'true',WORKFLOW_TG_CHAT_ID:'T',WORKFLOW_TG_BOT_TOKEN:'secret'}; let reservedRecord,fetches=0;
+  ctx.readWorkflowNotificationConfig_=()=>({enabled:true,chatId:'T',botToken:'secret'});ctx.assertSystemSheetsStructure_=()=>{};ctx.readWorkflowNotificationHistory_=()=>({records:[prepared,failure].concat(reservations)});
+  ctx.readWorkflowNotificationDocuments_=()=>[notificationDocument(ctx,{documentId:'A',documentStatus:'На подготовке'}),notificationDocument(ctx,{documentId:'B',documentStatus:'Other'})];ctx.readActiveDocumentWorkflowRules_=()=>[];
+  ctx.reserveWorkflowNotificationRetryAttempt_=record=>{reservedRecord=record;return {reserved:true};};ctx.sendTelegramMessage_=()=>{fetches++;};
+  const result=ctx.retryWorkflowNotificationDeliveries();assert.equal(fetches,0);assert.equal(result.staleSkipped,1);assert.equal(reservedRecord.result,'SKIPPED_STALE_BEFORE_RETRY');assert.equal(prepared.messageText,'ORIGINAL');
+});
+test('312. retry preserves exact attempt-1 target and payload despite changed current chat config', () => {
+  const ctx=baseContext(), old=notificationDate(ctx,'2020-01-01T00:00:00Z'), prepared={recordId:'P',recordType:'DELIVERY_PREPARED',runId:'R',deliveryId:'D',timestamp:old,notificationDate:'2026-09-08',channel:'TELEGRAM',target:'GROUP_A',result:'PREPARED',attemptNumber:1,messageHash:'hash',messageText:'EXACT ORIGINAL'}, failure={recordId:'F',recordType:'DELIVERY_RESULT',runId:'R',deliveryId:'D',timestamp:old,channel:'TELEGRAM',target:'GROUP_A',result:'FAILED_TECHNICAL',attemptNumber:1}, reservation={recordId:'B',recordType:'BUSINESS_RESERVATION',runId:'R',deliveryId:'D',documentId:'DOC-1',documentStatus:'На подготовке',notificationDate:'2026-09-08',event:'DUE_TODAY',channel:'TELEGRAM',target:'GROUP_A'};
+  ctx.readWorkflowNotificationConfig_=()=>({enabled:true,chatId:'GROUP_B',botToken:'secret'});ctx.assertSystemSheetsStructure_=()=>{};ctx.readWorkflowNotificationHistory_=()=>({records:[prepared,failure,reservation]});ctx.readWorkflowNotificationDocuments_=()=>[notificationDocument(ctx,{documentStatus:'На подготовке'})];ctx.readActiveDocumentWorkflowRules_=()=>[];
+  let prepared2, sentText, sentTarget, persisted;ctx.reserveWorkflowNotificationRetryAttempt_=record=>{prepared2=record;return {reserved:true};};ctx.sendTelegramMessage_=(token,target,text)=>{sentTarget=target;sentText=text;return {result:'SENT',telegramMessageId:'9'};};ctx.persistWorkflowNotificationResultIdempotently_=record=>{persisted=record;};ctx.generateNotificationId_=()=> 'FIXED';
+  const result=ctx.retryWorkflowNotificationDeliveries();assert.equal(result.retried,1);assert.equal(result.sent,1);assert.equal(prepared2.attemptNumber,2);assert.equal(prepared2.target,'GROUP_A');assert.equal(prepared2.messageText,'EXACT ORIGINAL');assert.equal(prepared2.messageHash,'hash');assert.equal(sentTarget,'GROUP_A');assert.notEqual(sentTarget,'GROUP_B');assert.equal(sentText,'EXACT ORIGINAL');assert.equal(persisted.attemptNumber,2);assert.equal(persisted.target,'GROUP_A');
+});
+test('313. retry reservation fails closed when attempt 2 already exists', () => {
+  const f=atomicNotificationFixture([{recordId:'OLD',recordType:'DELIVERY_PREPARED',runId:'R',deliveryId:'D',attemptNumber:2}]);
+  const record=f.ctx.buildDeliveryPreparedRecord_({recordId:'NEW',runId:'R',deliveryId:'D',attemptNumber:2,channel:'TELEGRAM',target:'T',messageHash:'h',messageText:'x'});
+  assert.equal(f.ctx.reserveWorkflowNotificationRetryAttempt_(record).reserved,false);assert.equal(f.setCalls(),0);
+});
+test('314. trigger setup removes only exact handlers and creates Moscow daily plus 15-minute retry', () => {
+  const ctx=baseContext(), deleted=[], created=[], triggers=['runWorkflowNotificationsDaily','other','retryWorkflowNotificationDeliveries'].map(name=>({getHandlerFunction:()=>name}));
+  function builder(handler){const calls=[];return {calls,timeBased(){calls.push(['timeBased']);return this;},atHour(v){calls.push(['atHour',v]);return this;},nearMinute(v){calls.push(['nearMinute',v]);return this;},everyDays(v){calls.push(['everyDays',v]);return this;},inTimezone(v){calls.push(['inTimezone',v]);return this;},everyMinutes(v){calls.push(['everyMinutes',v]);return this;},create(){created.push({handler,calls});return this;}};}
+  ctx.ScriptApp={getProjectTriggers:()=>triggers,deleteTrigger:t=>deleted.push(t.getHandlerFunction()),newTrigger:builder};
+  const result=ctx.setupWorkflowNotificationTriggers();assert.equal(result.created,2);assert.deepEqual(deleted,['runWorkflowNotificationsDaily','retryWorkflowNotificationDeliveries']);assert.equal(created[0].handler,'runWorkflowNotificationsDaily');assert.ok(created[0].calls.some(x=>x[0]==='atHour'&&x[1]===8));assert.ok(created[0].calls.some(x=>x[0]==='inTimezone'&&x[1]==='Europe/Moscow'));assert.ok(created[1].calls.some(x=>x[0]==='everyMinutes'&&x[1]===15));
+});
+test('315. Stage 4 scope has no document writes, automatic enable, one-shot retry, or attempt 3', () => {
+  const jobs=fs.readFileSync('WorkflowNotificationJobs.gs','utf8');assert.doesNotMatch(jobs,/getScriptProperties\(\)\.set|setProperty\(|after\(|at\(|attemptNumber:\s*3|setValues\(/);assert.match(jobs,/everyMinutes\(15\)/);assert.doesNotMatch(jobs,/ник в телеграмм/i);
+});
+test('316. daily pre-send persistence failure, including flush failure, causes zero fetches', () => {
+  for (const message of ['setValues failed','flush failed']) {
+    const ctx=baseContext(), candidate=telegramCandidate();let fetches=0;
+    ctx.readWorkflowNotificationConfig_=()=>({enabled:true,chatId:'T',botToken:'secret'});ctx.assertSystemSheetsStructure_=()=>{};ctx.readActiveDocumentWorkflowRules_=()=>[];ctx.readWorkflowNotificationDocuments_=()=>[{}];ctx.evaluateWorkflowNotification_=()=>candidate;ctx.workflowOperatorCardUrl_=()=>'';ctx.generateNotificationId_=()=> 'R';
+    ctx.reserveWorkflowNotificationPlan_=()=>{throw new Error(message);};ctx.sendTelegramMessage_=()=>{fetches++;};
+    assert.throws(()=>ctx.runWorkflowNotificationsDaily(),new RegExp(message));assert.equal(fetches,0);
+  }
+});
+test('317. production plan maps every grouped and multipart candidate exactly once', () => {
+  const ctx=baseContext();let serial=0;ctx.generateNotificationId_=()=> 'D'+(++serial);
+  const candidates=Array.from({length:30},(_,i)=>ctx.workflowProductionCandidate_(telegramCandidate({documentId:'DOC-'+i,objectId:'OBJ-'+(i%2),action:'X'.repeat(250)}),'2026-09-08','T'));
+  const plan=ctx.buildWorkflowProductionPlan_(candidates,{runId:'R',businessDate:'2026-09-08',target:'T',operatorCardUrl:'',now:notificationDate(ctx,'2026-09-08T05:00:00Z')});
+  assert.ok(plan.deliveries.length>1);assert.equal(plan.businessReservations.length,candidates.length);assert.equal(new Set(Array.from(plan.businessReservations,r=>ctx.buildNotificationBusinessKey_(r.documentId,r.notificationDate,r.event,r.channel,r.target))).size,candidates.length);
+  const deliveryIds=new Set(Array.from(plan.deliveries,d=>d.deliveryId));assert.ok(plan.businessReservations.every(r=>deliveryIds.has(r.deliveryId)));assert.ok(plan.deliveries.every(d=>plan.businessReservations.some(r=>r.deliveryId===d.deliveryId)));
+});
+test('318. daily attempt 1 sends to the newly prepared current configured target', () => {
+  const ctx=baseContext(), candidate=telegramCandidate();let serial=0,sentTarget='',preparedTarget='';
+  ctx.readWorkflowNotificationConfig_=()=>({enabled:true,chatId:'GROUP_B',botToken:'secret'});ctx.assertSystemSheetsStructure_=()=>{};ctx.readActiveDocumentWorkflowRules_=()=>[];ctx.readWorkflowNotificationDocuments_=()=>[{}];ctx.evaluateWorkflowNotification_=()=>candidate;ctx.workflowOperatorCardUrl_=()=>'';ctx.generateNotificationId_=prefix=>prefix+(++serial);
+  ctx.reserveWorkflowNotificationPlan_=(input,builder)=>{const plan=builder(input.businessCandidates);preparedTarget=plan.deliveries[0].target;return {businessReservations:plan.businessReservations,deliveries:plan.deliveries.map(ctx.buildDeliveryPreparedRecord_),alreadyReserved:[]};};
+  ctx.sendTelegramMessage_=(token,target)=>{sentTarget=target;return {result:'SENT',telegramMessageId:'1'};};ctx.persistWorkflowNotificationResultIdempotently_=()=>{};
+  const result=ctx.runWorkflowNotificationsDaily();assert.equal(result.deliveries,1);assert.equal(preparedTarget,'GROUP_B');assert.equal(sentTarget,'GROUP_B');
+});
+test('319. blank prepared target fails closed before every Telegram fetch', () => {
+  const ctx=baseContext();let fetches=0;ctx.sendTelegramMessage_=()=>{fetches++;};
+  assert.throws(()=>ctx.workflowSendPreparedDeliveries_([{target:'  ',messageText:'x'}],{botToken:'secret',chatId:'GROUP_B'},1),/target is required/);
+  assert.equal(fetches,0);
 });
 
 if (!process.exitCode) console.log(`\n${passed} tests passed.`);
