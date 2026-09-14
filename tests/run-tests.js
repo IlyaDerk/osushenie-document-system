@@ -2756,11 +2756,15 @@ test('257. inactive invalid permission is ignored and missing rule allows fallba
   assert.equal(result.status,'CANDIDATE'); assert.equal(result.effectiveDays,7); assert.equal(result.action,'не настроено');
   assert.ok(result.warnings.some(w=>w.code==='WORKFLOW_RULE_MISSING'));
 });
-test('258. eligibility exclusions follow active, terminal, location and transfer order', () => {
+test('258. completion requires signed and office while every other combination continues', () => {
   const ctx=baseContext();
   assert.equal(evaluateNotification(ctx,notificationDocument(ctx,{recordStatus:'Архивная'})).reason,'SKIPPED_INACTIVE_RECORD');
-  assert.equal(evaluateNotification(ctx,notificationDocument(ctx,{documentStatus:'Подписан с обеих сторон',statusChangedAt:'bad'})).reason,'SKIPPED_TERMINAL_STATUS');
-  assert.equal(evaluateNotification(ctx,notificationDocument(ctx,{documentLocation:'У заказчика'})).reason,'SKIPPED_DOCUMENT_NOT_IN_OFFICE');
+  const signedOffice=evaluateNotification(ctx,notificationDocument(ctx,{documentStatus:'  ПОДПИСАН С ОБЕИХ СТОРОН  ',documentLocation:' В ОФИСЕ '}),[],'2026-09-08T12:00:00Z');
+  assert.equal(signedOffice.reason,'SKIPPED_DOCUMENT_COMPLETED_IN_OFFICE');
+  const signedOutside=evaluateNotification(ctx,notificationDocument(ctx,{documentStatus:'Подписан с обеих сторон',documentLocation:'Мытищи'}),[],'2026-09-08T12:00:00Z');
+  const nonterminalOffice=evaluateNotification(ctx,notificationDocument(ctx,{documentStatus:'На согласовании у заказчика',documentLocation:'В офисе'}),[],'2026-09-08T12:00:00Z');
+  const nonterminalOutside=evaluateNotification(ctx,notificationDocument(ctx,{documentStatus:'На согласовании у заказчика',documentLocation:'У заказчика'}),[],'2026-09-08T12:00:00Z');
+  assert.equal(signedOutside.event,'DUE_TODAY'); assert.equal(nonterminalOffice.event,'DUE_TODAY'); assert.equal(nonterminalOutside.event,'DUE_TODAY');
   assert.equal(evaluateNotification(ctx,notificationDocument(ctx,{transferredAt:''})).reason,'SKIPPED_TRANSFER_DATE_BLANK');
   const invalid=evaluateNotification(ctx,notificationDocument(ctx,{transferredAt:'01.09.2026'}));
   assert.equal(invalid.reason,'SKIPPED_INVALID_TRANSFER_DATE'); assert.equal(invalid.warnings[0].code,'INVALID_TRANSFER_DATE');
@@ -2774,11 +2778,11 @@ test('259. workflow cycle handles blank, before same Moscow day and older transf
   const same=evaluateNotification(ctx,notificationDocument(ctx,{transferredAt:notificationDate(ctx,'2026-09-01T00:30:00Z'),statusChangedAt:notificationDate(ctx,'2026-09-01T20:30:00Z')}),[],business);
   assert.equal(same.status,'CANDIDATE');
 });
-test('260. invalid status-change date warns while terminal status wins first', () => {
+test('260. invalid status-change date warns while completed-in-office wins first', () => {
   const ctx=baseContext(), invalid=evaluateNotification(ctx,notificationDocument(ctx,{statusChangedAt:'bad'}));
   assert.equal(invalid.reason,'SKIPPED_INVALID_STATUS_CHANGE_DATE'); assert.equal(invalid.warnings[0].code,'INVALID_STATUS_CHANGE_DATE');
-  const terminal=evaluateNotification(ctx,notificationDocument(ctx,{documentStatus:'Подписан с обеих сторон',statusChangedAt:'bad'}));
-  assert.equal(terminal.reason,'SKIPPED_TERMINAL_STATUS'); assert.equal(terminal.warnings.length,0);
+  const completed=evaluateNotification(ctx,notificationDocument(ctx,{documentStatus:'Подписан с обеих сторон',documentLocation:'В офисе',statusChangedAt:'bad'}));
+  assert.equal(completed.reason,'SKIPPED_DOCUMENT_COMPLETED_IN_OFFICE'); assert.equal(completed.warnings.length,0);
 });
 test('261. planner effective days preserve manual zero, manual positive, rule and fallback seven', () => {
   let ctx=baseContext(); assert.equal(evaluateNotification(ctx,notificationDocument(ctx,{implementationDays:0})).effectiveDays,0);
@@ -2901,6 +2905,13 @@ test('277. dry-run planner previews dedup, aggregation and grouped model without
   const old=ctx.buildBusinessReservationRecord_({recordId:'H',runId:'R',deliveryId:'X',documentId:candidate.documentId,notificationDate:'2026-09-08',event:candidate.event,channel:'TELEGRAM',target:'DRY_RUN_GROUP_TARGET'});
   const result=ctx.buildWorkflowNotificationDryRun_({documents:[doc],rules:[notificationRule()],historyRecords:[old],businessDate:'2026-09-08',businessAt:at,generatedAt:at});
   assert.equal(result.mode,'DRY_RUN'); assert.equal(result.counts.alreadyReserved,1); assert.equal(result.counts.wouldSend,0); assert.equal(result.model.candidateCount,0); assert.equal(JSON.stringify(doc),before);
+});
+test('277a. dry-run reports the deterministic completed-in-office skip reason', () => {
+  const ctx=baseContext(), at=notificationDate(ctx,'2026-09-08T12:00:00Z');
+  const completed=notificationDocument(ctx,{documentStatus:'Подписан с обеих сторон',documentLocation:'В офисе'});
+  const result=ctx.buildWorkflowNotificationDryRun_({documents:[completed],rules:[],historyRecords:[],businessDate:'2026-09-08',businessAt:at,generatedAt:at,telegramPreview:false});
+  assert.deepEqual(Object.assign({},result.skippedReasons),{SKIPPED_DOCUMENT_COMPLETED_IN_OFFICE:1});
+  assert.equal(result.counts.candidatesBeforeDedup,0);
 });
 test('278. history repository contains no transport, triggers, or properties configuration', () => {
   const text=fs.readFileSync('WorkflowNotificationHistory.gs','utf8');
@@ -3131,8 +3142,13 @@ test('310. stale validation covers approved state failures but missing rule and 
   assert.match(ctx.workflowRetryStaleReasons_([reservation],[],[]).join(','),/MISSING_DOCUMENT/);
   assert.match(ctx.workflowRetryStaleReasons_([reservation],[doc,doc],[]).join(','),/DUPLICATE/);
   assert.match(ctx.workflowRetryStaleReasons_([reservation],[Object.assign({},doc,{recordStatus:'Архивная'})],[]).join(','),/INACTIVE/);
-  assert.match(ctx.workflowRetryStaleReasons_([reservation],[Object.assign({},doc,{documentStatus:'Подписан с обеих сторон'})],[]).join(','),/TERMINAL|STATUS_CHANGED/);
-  assert.match(ctx.workflowRetryStaleReasons_([reservation],[Object.assign({},doc,{documentLocation:'У заказчика'})],[]).join(','),/LOCATION/);
+  const signedOffice=ctx.workflowRetryStaleReasons_([reservation],[Object.assign({},doc,{documentStatus:'Подписан с обеих сторон',documentLocation:'В офисе'})],[]);
+  assert.ok(Array.from(signedOffice).some(reason=>/COMPLETED_IN_OFFICE/.test(reason)));
+  assert.ok(Array.from(signedOffice).some(reason=>/STATUS_CHANGED/.test(reason)));
+  const signedReservation={documentId:doc.documentId,documentStatus:'Подписан с обеих сторон'};
+  assert.deepEqual(Array.from(ctx.workflowRetryStaleReasons_([signedReservation],[Object.assign({},doc,{documentStatus:'Подписан с обеих сторон',documentLocation:'Мытищи'})],[])),[]);
+  assert.deepEqual(Array.from(ctx.workflowRetryStaleReasons_([reservation],[Object.assign({},doc,{documentLocation:'В офисе'})],[])),[]);
+  assert.deepEqual(Array.from(ctx.workflowRetryStaleReasons_([reservation],[Object.assign({},doc,{documentLocation:'У заказчика'})],[])),[]);
   assert.match(ctx.workflowRetryStaleReasons_([reservation],[Object.assign({},doc,{transferredAt:''})],[]).join(','),/TRANSFER_BLANK/);
   assert.match(ctx.workflowRetryStaleReasons_([reservation],[doc],[notificationRule({notify:'Нет'})]).join(','),/RULE_NOTIFY_NO/);
   assert.match(ctx.workflowRetryStaleReasons_([reservation],[doc],[notificationRule({notify:''})]).join(','),/RULE_NOTIFY_INVALID/);

@@ -413,8 +413,8 @@ function workflowRetryStaleReasons_(reservations, documents, rules) {
     if (matches.length > 1) { reasons.push(reservation.documentId + ':DUPLICATE_DOCUMENT_ID'); return; }
     const document = matches[0], prefix = reservation.documentId + ':';
     if (workflowNotificationFold_(document.recordStatus) !== workflowNotificationFold_(WORKFLOW_NOTIFICATION_.ACTIVE_RECORD)) reasons.push(prefix + 'INACTIVE');
-    if (workflowNotificationFold_(document.documentStatus) === workflowNotificationFold_(WORKFLOW_NOTIFICATION_.TERMINAL_STATUS)) reasons.push(prefix + 'TERMINAL');
-    if (workflowNotificationFold_(document.documentLocation) !== workflowNotificationFold_(WORKFLOW_NOTIFICATION_.OFFICE_LOCATION)) reasons.push(prefix + 'LOCATION');
+    if (workflowNotificationFold_(document.documentStatus) === workflowNotificationFold_(WORKFLOW_NOTIFICATION_.TERMINAL_STATUS) &&
+        workflowNotificationFold_(document.documentLocation) === workflowNotificationFold_(WORKFLOW_NOTIFICATION_.OFFICE_LOCATION)) reasons.push(prefix + 'COMPLETED_IN_OFFICE');
     if (workflowNotificationFold_(document.documentStatus) !== workflowNotificationFold_(reservation.documentStatus)) reasons.push(prefix + 'STATUS_CHANGED');
     if (documentWorkflowIsBlank_(document.transferredAt)) reasons.push(prefix + 'TRANSFER_BLANK');
     else if (!isValidTransferredAt_(document.transferredAt)) reasons.push(prefix + 'TRANSFER_INVALID');

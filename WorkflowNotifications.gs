@@ -63,11 +63,9 @@ function evaluateWorkflowNotification_(document, activeRules, businessAt) {
   if (fold(document.recordStatus) !== fold(WORKFLOW_NOTIFICATION_.ACTIVE_RECORD)) {
     return workflowNotificationSkip_('SKIPPED_INACTIVE_RECORD', document);
   }
-  if (fold(document.documentStatus) === fold(WORKFLOW_NOTIFICATION_.TERMINAL_STATUS)) {
-    return workflowNotificationSkip_('SKIPPED_TERMINAL_STATUS', document);
-  }
-  if (fold(document.documentLocation) !== fold(WORKFLOW_NOTIFICATION_.OFFICE_LOCATION)) {
-    return workflowNotificationSkip_('SKIPPED_DOCUMENT_NOT_IN_OFFICE', document);
+  if (fold(document.documentStatus) === fold(WORKFLOW_NOTIFICATION_.TERMINAL_STATUS) &&
+      fold(document.documentLocation) === fold(WORKFLOW_NOTIFICATION_.OFFICE_LOCATION)) {
+    return workflowNotificationSkip_('SKIPPED_DOCUMENT_COMPLETED_IN_OFFICE', document);
   }
   if (documentWorkflowIsBlank_(document.transferredAt)) {
     return workflowNotificationSkip_('SKIPPED_TRANSFER_DATE_BLANK', document);
