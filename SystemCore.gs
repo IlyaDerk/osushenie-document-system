@@ -225,8 +225,8 @@ const SYSTEM_CONFIG = {
     ]),
     OBJECT_STATUSES: Object.freeze([
       'Действующий',
-      'Завершён',
-      'Отменён'
+      'Ожидаем оплату',
+      'Завершён'
     ]),
 
     CHANGE_ACTION_CREATE: 'Создание',

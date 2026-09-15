@@ -1275,7 +1275,7 @@ test('108. duplicate normalized foreman names with different ST-IDs fail safely'
 });
 test('109. object statuses are centralized and preserve approved spelling', () => {
   const statuses=Array.from(vm.runInContext('SYSTEM_CONFIG.VALUES.OBJECT_STATUSES',baseContext()));
-  assert.deepEqual(statuses,['Действующий','Завершён','Отменён']);
+  assert.deepEqual(statuses,['Действующий','Ожидаем оплату','Завершён']);
   for(const documentStatus of ['На подготовке','Передан заказчику','Требует исправления','Подписан с обеих сторон']) assert.ok(!statuses.includes(documentStatus));
 });
 test('110. object synchronization still carries foreman name, ST-ID and status', () => {
@@ -1295,7 +1295,7 @@ test('112. foreman dropdown uses clean names only', () => {
   const ctx=baseContext({SpreadsheetApp:{flush(){},newDataValidation(){const rule={requireValueInList(values){rule.values=values;return rule},setAllowInvalid(){return rule},build(){return rule}};return rule}}});
   const rules=[]; const objects={config:{dataStartRow:3},sheet:{getMaxRows:()=>10,getRange:()=>({setDataValidation(rule){rules.push(rule)}}),hideColumns(){}}};
   ctx.assertSystemSheetsStructure_=()=>{}; ctx.getSystemSheetContext_=key=>key==='OBJECTS'?objects:{};
-  ctx.objectControlsForemen_=()=>[{id:'ST-16',name:'Иванов Иван Иванович'}]; ctx.objectControlsEnsureStatuses_=()=>['Действующий','Завершён','Отменён'];
+  ctx.objectControlsForemen_=()=>[{id:'ST-16',name:'Иванов Иван Иванович'}]; ctx.objectControlsEnsureStatuses_=()=>['Действующий','Ожидаем оплату','Завершён'];
   ctx.getSystemColumn_=(key,h)=>h==='Ответственный прораб'?6:h==='Статус объекта'?7:5;
   ctx.setupObjectSheetControls();
   assert.deepEqual(Array.from(rules[0].values),['Иванов Иван Иванович']);
@@ -1343,19 +1343,23 @@ test('116. object name is a normal read-only fact field', () => {
   assert.equal(accepted.rows.length,1);
 });
 
-test('117. creation accepts every object status and rejects an empty status', () => {
+test('117. creation accepts current object statuses and rejects cancelled, empty, and partial objects', () => {
   const ctx=baseContext();
   const headers=['ID объекта','Название объекта','Адрес','Номер договора','ID ответственного прораба','Ответственный прораб','Статус объекта','Дата начала работ','Дата окончания (по плану)','Дата окончания (по факту)'];
   const start=vm.runInContext("new Date('2026-08-01T00:00:00Z')",ctx);
   const end=vm.runInContext("new Date('2026-08-31T00:00:00Z')",ctx);
-  const statuses=['Действующий','Завершён','Отменён','','На подготовке'];
+  const statuses=['Действующий','Ожидаем оплату','Завершён','Отменён','','На подготовке'];
   const rows=statuses.map((status,index)=>['OBJ-'+index,'Объект '+index,'','DOG-'+index,'ST-1','Иванов',status,start,end,'']);
-  const context={headers,headerMap:Object.fromEntries(headers.map((h,i)=>[h,i+1])),config:{dataStartRow:3,requiredHeaders:headers},sheet:{getLastRow:()=>7,getRange:()=>({getValues:()=>rows})}};
+  rows.push(['OBJ-PART','','','','','','Действующий','','','']);
+  const context={headers,headerMap:Object.fromEntries(headers.map((h,i)=>[h,i+1])),config:{dataStartRow:3,requiredHeaders:headers},sheet:{getLastRow:()=>3+rows.length-1,getRange:()=>({getValues:()=>rows})}};
   ctx.getSystemSheetContext_=()=>context;
   const result=ctx.readAndValidateCreationObjects_();
-  assert.deepEqual(Array.from(result.validObjects,item=>item.objectStatus),['Действующий','Завершён','Отменён']);
-  assert.equal(result.skippedObjects.length,2); assert.match(result.skippedObjects[0].reasons.join(' '),/не заполнено поле «Статус объекта»/);
-  assert.match(result.skippedObjects[1].reasons.join(' '),/недопустимое значение «На подготовке»/);
+  assert.deepEqual(Array.from(result.validObjects,item=>item.objectStatus),['Действующий','Ожидаем оплату','Завершён']);
+  assert.equal(result.skippedObjects.length,4);
+  assert.match(result.skippedObjects[0].reasons.join(' '),/недопустимое значение «Отменён»/);
+  assert.match(result.skippedObjects[1].reasons.join(' '),/не заполнено поле «Статус объекта»/);
+  assert.match(result.skippedObjects[2].reasons.join(' '),/недопустимое значение «На подготовке»/);
+  assert.match(result.skippedObjects[3].reasons.join(' '),/не заполнено поле «Название объекта»/);
 });
 
 function readOnlyGuardFixture(editColumn, editWidth, mutate) {
@@ -1790,6 +1794,47 @@ test('158. mass creation applies One blank and Many max-plus-one numbering', () 
   assert.equal(prepared.documentRows[1][numberIndex],5);
   assert.equal(prepared.documentRows[0][typeIndex],'Договор');
   assert.equal(prepared.documentRows[1][typeIndex],'Акт');
+});
+
+function creationFactsFixture(rows, rules) {
+  const ctx=baseContext();
+  const headers=['ID документа','ID объекта','ID типа документа','Тип документа','Номер документа'];
+  const context={headers,headerMap:Object.fromEntries(headers.map((header,index)=>[header,index+1])),config:{dataStartRow:4},sheet:{getLastRow:()=>rows.length+3,getRange:()=>({getValues:()=>rows})}};
+  ctx.getSystemSheetContext_=()=>context;
+  return {ctx,result:ctx.readExistingCreationFacts_(rules)};
+}
+test('158a. object/type duplicates are reported only for repeatability One', () => {
+  const rules=[{id:'ONE',name:'Договор',repeatability:'Один'},{id:'MANY',name:'Акт',repeatability:'Много'}];
+  const fixture=creationFactsFixture([
+    ['D1','OBJ','ONE','Договор',''],['D2','OBJ','ONE','Договор',''],
+    ['D3','OBJ','MANY','Акт',1],['D4','OBJ','MANY','Акт',2],['D5','OBJ','MANY','Акт',3]
+  ],rules);
+  assert.deepEqual(Array.from(fixture.result.duplicateObjectTypeKeys),['OBJ\u0000ONE']);
+  assert.equal(fixture.result.warnings.filter(warning=>/повторяемостью «Один»/.test(warning)).length,1);
+  assert.match(fixture.result.warnings[0],/ID объекта: OBJ[\s\S]*ID типа документа: ONE[\s\S]*Тип документа: Договор[\s\S]*Строки: 4, 5/);
+  assert.ok(!fixture.result.warnings.some(warning=>/ID типа документа: MANY/.test(warning)));
+});
+test('158b. duplicate document ID remains a problem for One and Many', () => {
+  const fixture=creationFactsFixture([
+    ['SAME','OBJ','ONE','Договор',''],['SAME','OBJ','MANY','Акт',1]
+  ],[{id:'ONE',name:'Договор',repeatability:'Один'},{id:'MANY',name:'Акт',repeatability:'Много'}]);
+  assert.deepEqual(Array.from(fixture.result.duplicateDocumentIds),['SAME']);
+  assert.ok(fixture.result.warnings.some(warning=>/ID документа «SAME» повторяется/.test(warning)));
+});
+test('158c. mass creation remains idempotent for existing Many and creates only absent initial types', () => {
+  const ctx=baseContext(), objects=[{id:'OBJ'}], rules=[
+    {id:'MANY',name:'Акт',repeatability:'Много'},
+    {id:'ABSENT',name:'Справка',repeatability:'Много'}
+  ];
+  const plan=ctx.buildMissingDocumentsPlan_(objects,rules,{keys:{'OBJ\u0000MANY':[4,5,6]}});
+  assert.equal(plan.existingDocuments,1);
+  assert.deepEqual(Array.from(plan.missing,item=>item.rule.id),['ABSENT']);
+});
+test('158d. incomplete fact keys remain visible and do not count as existing documents', () => {
+  const fixture=creationFactsFixture([['D1','OBJ','','Акт','']],[]);
+  assert.deepEqual(Array.from(fixture.result.incompleteFactRows),[4]);
+  assert.ok(fixture.result.warnings.some(warning=>/Неполный ключ в строке фактов 4/.test(warning)));
+  assert.equal(fixture.result.keys['OBJ\u0000'],undefined);
 });
 
 test('159. operator card accepts and histories the three document-owned dates', () => {

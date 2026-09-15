@@ -61,7 +61,7 @@ function createObjectDocumentsUnderLock_(operationId, startedAt, userEmail) {
 
   const rules = readAutomaticDocumentRules_();
   const objectResult = readAndValidateCreationObjects_();
-  const factResult = readExistingCreationFacts_();
+  const factResult = readExistingCreationFacts_(rules);
   const plan = buildMissingDocumentsPlan_(
     objectResult.validObjects,
     rules,
@@ -432,7 +432,7 @@ function readAndValidateCreationObjects_() {
 
 
 /** Анализирует ключи и ID уже существующих строк фактов. */
-function readExistingCreationFacts_() {
+function readExistingCreationFacts_(rules) {
   const context = getSystemSheetContext_('DOCUMENTS');
   const rows = readCreationSheetValues_(context);
   const objectIndex = creationColumnIndex_(context, H.OBJECT_ID);
@@ -444,6 +444,10 @@ function readExistingCreationFacts_() {
   const documentNumbersByKey = {};
   const documentIds = {};
   const incompleteFactRows = [];
+  const ruleByTypeId = {};
+  (rules || []).forEach(function (rule) {
+    ruleByTypeId[String(rule.id || '').trim()] = rule;
+  });
 
   rows.forEach(function (row, offset) {
     if (creationRowIsEmpty_(row)) {
@@ -479,15 +483,27 @@ function readExistingCreationFacts_() {
   });
 
   const duplicateObjectTypeKeys = Object.keys(keys).filter(function (key) {
-    return keys[key].length > 1;
+    const typeId = key.split('\u0000')[1];
+    const rule = ruleByTypeId[typeId];
+    return keys[key].length > 1 && rule &&
+      creationNormalizedValue_(rule.repeatability) === creationNormalizedValue_(
+        SYSTEM_CONFIG.VALUES.DOCUMENT_REPEATABILITY_ONE
+      );
   });
   const duplicateDocumentIds = Object.keys(documentIds).filter(function (id) {
     return documentIds[id].length > 1;
   });
   const warnings = [];
   duplicateObjectTypeKeys.forEach(function (key) {
+    const parts = key.split('\u0000');
+    const rule = ruleByTypeId[parts[1]];
     warnings.push(
-      'Дубль сочетания объект/тип в строках ' + keys[key].join(', ') + '.'
+      'Дубль документа с повторяемостью «' +
+      SYSTEM_CONFIG.VALUES.DOCUMENT_REPEATABILITY_ONE + '»:\n' +
+      'ID объекта: ' + parts[0] + '\n' +
+      'ID типа документа: ' + parts[1] + '\n' +
+      'Тип документа: ' + rule.name + '\n' +
+      'Строки: ' + keys[key].join(', ') + '.'
     );
   });
   duplicateDocumentIds.forEach(function (id) {
