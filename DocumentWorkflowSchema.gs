@@ -67,7 +67,7 @@ function documentWorkflowNormalizedConditions_(value) {
 }
 
 /** Header-driven reader. Invalid active rules fail closed instead of being guessed. */
-function readActiveDocumentWorkflowRules_() {
+function readActiveDocumentWorkflowRules_(options) {
   const context = getSystemSheetContext_('WORKFLOW_RULES');
   const count = context.sheet.getLastRow() - context.config.dataStartRow + 1;
   if (count <= 0) return [];
@@ -116,7 +116,7 @@ function readActiveDocumentWorkflowRules_() {
   const conflicts = Object.keys(rulesByConditions).filter(function (key) {
     return rulesByConditions[key].length > 1;
   });
-  if (conflicts.length) {
+  if (conflicts.length && !(options && options.allowAmbiguous === true)) {
     const details = conflicts.map(function (key) {
       return rulesByConditions[key].map(function (rule) {
         return 'row ' + rule.sheetRow + (rule.id ? ' (ID «' + rule.id + '»)' : '');
