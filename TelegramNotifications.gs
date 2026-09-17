@@ -64,18 +64,14 @@ function telegramDeadlineText_(daysRemaining) {
   return 'Срок: через ' + telegramRussianDays_(days);
 }
 
-function formatTelegramDocumentBlock_(candidate) {
+function formatTelegramDocumentBlock_(candidate, index) {
   const type = String(candidate.documentType || '').trim() || 'Документ';
   const number = String(candidate.documentNumber || '').trim();
-  return [
-    '• ' + type + (number ? ' — ' + number : ''),
-    '  Статус: ' + (String(candidate.documentStatus || '').trim() || 'не указан'),
-    '  Где: ' + (String(candidate.location || '').trim() || 'не указано'),
-    '  Передан: ' + telegramCandidateDate_(candidate.transferredAt),
-    '  Контроль: ' + telegramDisplayDate_(candidate.controlDateKey),
-    '  ' + telegramDeadlineText_(candidate.daysRemaining),
-    '  Действие: ' + (String(candidate.action || '').trim() || WORKFLOW_NOTIFICATION_.ACTION_NOT_CONFIGURED)
-  ].join('\n');
+  const label = [type, number].filter(function (value) { return value; }).join(' ');
+  const action = String(candidate.action || '').trim() ||
+    WORKFLOW_NOTIFICATION_.ACTION_NOT_CONFIGURED;
+  return String(index) + '. ' + label + ' - ' + action + '. До ' +
+    telegramDisplayDate_(candidate.controlDateKey);
 }
 
 function telegramObjectHeading_(object) {
@@ -87,7 +83,6 @@ function telegramObjectHeading_(object) {
 function telegramHeader_(businessDate, testMode, partNumber, partCount) {
   const lines = [];
   if (testMode) lines.push(WORKFLOW_TELEGRAM_.TEST_MARKER);
-  lines.push('📄 Документооборот — ' + telegramDisplayDate_(businessDate));
   if (partCount > 1) lines.push('Часть ' + partNumber + '/' + partCount);
   return lines.join('\n');
 }
@@ -95,7 +90,7 @@ function telegramHeader_(businessDate, testMode, partNumber, partCount) {
 /** Pure deterministic formatter/splitter. */
 function buildTelegramPhysicalMessages_(model, options) {
   const input = options || {}, testMode = input.testMode === true;
-  const footer = input.operatorCardUrl ? 'Открыть карточку операциониста: ' + input.operatorCardUrl : '';
+  const footer = input.operatorCardUrl ? 'Ссылка на таблицу: ' + input.operatorCardUrl : '';
   const objects = (model && model.objects) || [];
   if (!objects.length && !testMode) return [];
   const headerReserve = telegramHeader_(input.businessDate, testMode, 9999, 9999).length + 2;
@@ -105,14 +100,16 @@ function buildTelegramPhysicalMessages_(model, options) {
   let segments = [];
   objects.forEach(function (object) {
     const heading = telegramObjectHeading_(object);
-    const documents = (object.documents || []).map(formatTelegramDocumentBlock_);
-    const whole = [heading].concat(documents).join('\n\n');
+    const documents = (object.documents || []).map(function (candidate, index) {
+      return formatTelegramDocumentBlock_(candidate, index + 1);
+    });
+    const whole = [heading].concat(documents).join('\n');
     if (whole.length <= bodyLimit) {
       segments.push({ text: whole, references: (object.documents || []).slice() });
       return;
     }
     documents.forEach(function (documentText, index) {
-      const block = heading + '\n\n' + documentText;
+      const block = heading + '\n' + documentText;
       const candidate = object.documents[index];
       if (block.length > bodyLimit) {
         throw new Error('Telegram document block exceeds safe limit: documentId=' +
@@ -136,7 +133,8 @@ function buildTelegramPhysicalMessages_(model, options) {
   });
   const count = bodies.length;
   return bodies.map(function (body, index) {
-    let text = telegramHeader_(input.businessDate, testMode, index + 1, count) + '\n\n' + body.text;
+    const header = telegramHeader_(input.businessDate, testMode, index + 1, count);
+    let text = header ? header + '\n\n' + body.text : body.text;
     if (index === count - 1 && footer) text += '\n\n' + footer;
     if (text.length > WORKFLOW_TELEGRAM_.MAX_MESSAGE_LENGTH) throw new Error('Telegram message exceeds safe limit.');
     return { partNumber: index + 1, partCount: count, text: text, references: body.references };
