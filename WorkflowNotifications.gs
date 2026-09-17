@@ -3,10 +3,16 @@ const WORKFLOW_NOTIFICATION_ = Object.freeze({
   TIMEZONE: 'Europe/Moscow',
   ACTIVE_RECORD: SYSTEM_CONFIG.VALUES.ACTIVE_RECORD_STATUS,
   TERMINAL_STATUS: 'Подписан с обеих сторон',
-  OFFICE_LOCATION: 'В офисе',
+  FINAL_LOCATIONS: Object.freeze(['Мытищи', 'Проспект Мира']),
   YES: 'Да',
   NO: 'Нет',
-  ACTION_NOT_CONFIGURED: 'не настроено'
+  ACTION_NOT_CONFIGURED: 'не настроено',
+  DEFAULT_ACTIONS: Object.freeze({
+    'на подготовке': 'подготовить документы',
+    'на согласовании у заказчика': 'согласовать документы с заказчиком',
+    'подписан у заказчика': 'подписать документы с нашей стороны',
+    'подписан с обеих сторон': 'забрать документы у заказчика'
+  })
 });
 
 function workflowNotificationFold_(value) {
@@ -57,31 +63,48 @@ function workflowNotificationEvent_(daysRemaining) {
   return null;
 }
 
+function workflowNotificationIsComplete_(document) {
+  if (workflowNotificationFold_(document.documentStatus) !==
+      workflowNotificationFold_(WORKFLOW_NOTIFICATION_.TERMINAL_STATUS)) return false;
+  const location = workflowNotificationFold_(document.documentLocation);
+  return WORKFLOW_NOTIFICATION_.FINAL_LOCATIONS.some(function (finalLocation) {
+    return location === workflowNotificationFold_(finalLocation);
+  });
+}
+
+function workflowNotificationBaseDate_(document) {
+  if (!documentWorkflowIsBlank_(document.transferredAt) &&
+      isValidTransferredAt_(document.transferredAt)) return document.transferredAt;
+  if (!documentWorkflowIsBlank_(document.updatedAt) &&
+      isValidTransferredAt_(document.updatedAt)) return document.updatedAt;
+  return null;
+}
+
+function workflowNotificationDefaultAction_(status) {
+  return WORKFLOW_NOTIFICATION_.DEFAULT_ACTIONS[workflowNotificationFold_(status)] ||
+    WORKFLOW_NOTIFICATION_.ACTION_NOT_CONFIGURED;
+}
+
 function evaluateWorkflowNotification_(document, activeRules, businessAt) {
   const warnings = [];
   const fold = workflowNotificationFold_;
   if (fold(document.recordStatus) !== fold(WORKFLOW_NOTIFICATION_.ACTIVE_RECORD)) {
     return workflowNotificationSkip_('SKIPPED_INACTIVE_RECORD', document);
   }
-  if (fold(document.documentStatus) === fold(WORKFLOW_NOTIFICATION_.TERMINAL_STATUS)) {
+  if (workflowNotificationIsComplete_(document)) {
     return workflowNotificationSkip_('SKIPPED_TERMINAL_STATUS', document);
   }
-  if (fold(document.documentLocation) !== fold(WORKFLOW_NOTIFICATION_.OFFICE_LOCATION)) {
-    return workflowNotificationSkip_('SKIPPED_DOCUMENT_NOT_IN_OFFICE', document);
-  }
-  if (documentWorkflowIsBlank_(document.transferredAt)) {
-    return workflowNotificationSkip_('SKIPPED_TRANSFER_DATE_BLANK', document);
-  }
-  if (!isValidTransferredAt_(document.transferredAt)) {
+  const baseDateValue = workflowNotificationBaseDate_(document);
+  if (!baseDateValue) {
     warnings.push(workflowNotificationWarning_(
-      'INVALID_TRANSFER_DATE', 'Некорректное значение «' + H.TRANSFERRED_AT + '».'
+      'INVALID_BASE_DATE', 'Некорректны «' + H.TRANSFERRED_AT + '» и «' + H.UPDATED_AT + '».'
     ));
     return workflowNotificationSkip_(
-      'SKIPPED_INVALID_TRANSFER_DATE', document, warnings
+      'SKIPPED_INVALID_BASE_DATE', document, warnings
     );
   }
 
-  const transferDate = workflowNotificationDateOrdinal_(document.transferredAt);
+  const transferDate = workflowNotificationDateOrdinal_(baseDateValue);
   if (!documentWorkflowIsBlank_(document.statusChangedAt)) {
     if (!isValidTransferredAt_(document.statusChangedAt)) {
       warnings.push(workflowNotificationWarning_(
@@ -137,7 +160,7 @@ function evaluateWorkflowNotification_(document, activeRules, businessAt) {
 
   let action = rule ? String(rule.action || '').trim() : '';
   if (!action) {
-    action = WORKFLOW_NOTIFICATION_.ACTION_NOT_CONFIGURED;
+    action = workflowNotificationDefaultAction_(document.documentStatus);
     if (rule) {
       warnings.push(workflowNotificationWarning_(
         'WORKFLOW_ACTION_MISSING', 'В active rule не настроено «' + H.ACTION + '».',
@@ -146,9 +169,9 @@ function evaluateWorkflowNotification_(document, activeRules, businessAt) {
     }
   }
 
-  const effectiveDays = getEffectiveImplementationDays_(
-    document.implementationDays, rule
-  );
+  const effectiveDays = !documentWorkflowIsBlank_(document.implementationDays) &&
+    isValidImplementationDays_(document.implementationDays)
+    ? document.implementationDays : 7;
   const businessDate = workflowNotificationDateOrdinal_(businessAt);
   const controlDay = transferDate.day + effectiveDays;
   const daysRemaining = controlDay - businessDate.day;
@@ -165,7 +188,7 @@ function evaluateWorkflowNotification_(document, activeRules, businessAt) {
     documentNumber: String(document.documentNumber || '').trim(),
     documentStatus: String(document.documentStatus || '').trim(),
     location: String(document.documentLocation || '').trim(),
-    transferredAt: document.transferredAt,
+    transferredAt: baseDateValue,
     statusChangedAt: document.statusChangedAt,
     effectiveDays: effectiveDays,
     controlDateKey: workflowNotificationDateKeyFromDay_(controlDay),
