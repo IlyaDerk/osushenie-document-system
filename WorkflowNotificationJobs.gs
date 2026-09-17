@@ -21,7 +21,6 @@ function readWorkflowNotificationDocuments_() {
       documentStatus: row[column(H.DOCUMENT_STATUS)],
       documentLocation: row[column(H.DOCUMENT_LOCATION)],
       transferredAt: row[column(H.TRANSFERRED_AT)],
-      updatedAt: row[column(H.UPDATED_AT)],
       implementationDays: row[column(H.IMPLEMENTATION_DAYS)],
       statusChangedAt: row[column(H.DOCUMENT_STATUS_CHANGED_AT)],
       recordStatus: row[column(H.RECORD_STATUS)]
@@ -416,14 +415,16 @@ function workflowRetryStaleReasons_(reservations, documents, rules) {
     if (workflowNotificationFold_(document.recordStatus) !== workflowNotificationFold_(WORKFLOW_NOTIFICATION_.ACTIVE_RECORD)) reasons.push(prefix + 'INACTIVE');
     if (workflowNotificationIsCompleted_(document)) reasons.push(prefix + 'WORKFLOW_COMPLETED');
     if (workflowNotificationFold_(document.documentStatus) !== workflowNotificationFold_(reservation.documentStatus)) reasons.push(prefix + 'STATUS_CHANGED');
-    const baseDate = workflowNotificationResolveBaseDate_(document);
-    if (!baseDate.valid) reasons.push(prefix + 'BASE_DATE_UNAVAILABLE');
-    if (baseDate.source === 'transferredAt' && !documentWorkflowIsBlank_(document.statusChangedAt)) {
+    const needsOfficeReturn = workflowNotificationNeedsOfficeReturn_(document);
+    if (needsOfficeReturn && !documentWorkflowIsBlank_(document.statusChangedAt)) {
       if (!isValidTransferredAt_(document.statusChangedAt)) reasons.push(prefix + 'STATUS_DATE_INVALID');
-      else if (workflowNotificationDateOrdinal_(document.transferredAt).day <
-          workflowNotificationDateOrdinal_(document.statusChangedAt).day) {
-        reasons.push(prefix + 'CYCLE_NOT_STARTED');
-      }
+    } else {
+      if (documentWorkflowIsBlank_(document.transferredAt)) reasons.push(prefix + 'TRANSFER_BLANK');
+      else if (!isValidTransferredAt_(document.transferredAt)) reasons.push(prefix + 'TRANSFER_INVALID');
+      if (!documentWorkflowIsBlank_(document.statusChangedAt) && !isValidTransferredAt_(document.statusChangedAt)) reasons.push(prefix + 'STATUS_DATE_INVALID');
+      if (isValidTransferredAt_(document.transferredAt) && !documentWorkflowIsBlank_(document.transferredAt) &&
+          isValidTransferredAt_(document.statusChangedAt) && !documentWorkflowIsBlank_(document.statusChangedAt) &&
+          workflowNotificationDateOrdinal_(document.transferredAt).day < workflowNotificationDateOrdinal_(document.statusChangedAt).day) reasons.push(prefix + 'CYCLE_NOT_STARTED');
     }
     const normalized = documentWorkflowNormalizedConditions_(document), matching = (rules || []).filter(function (rule) {
       const ruleConditions = documentWorkflowNormalizedConditions_(rule);
