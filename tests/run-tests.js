@@ -388,8 +388,8 @@ test('29. archive cutoff selects only rows older than cutoff', () => {
   const ctx = baseContext();
   ctx.getSystemSpreadsheet_ = () => ({ getSpreadsheetTimeZone: () => 'UTC' });
   const cutoff = ctx.parseArchiveCutoffDate_('01.08.2026');
-  assert.ok(new Date(2026, 6, 31).getTime() < cutoff.getTime());
-  assert.ok(!(new Date(2026, 7, 1).getTime() < cutoff.getTime()));
+  assert.ok(new Date(Date.UTC(2026, 6, 31)).getTime() < cutoff.getTime());
+  assert.ok(!(new Date(Date.UTC(2026, 7, 1)).getTime() < cutoff.getTime()));
 });
 test('30. archive cutoff uses spreadsheet timezone and keeps cutoff-day rows active', () => {
   const ctx = baseContext();
@@ -1002,7 +1002,7 @@ test('75. sidebar groups creation dates and reset is local-only for all filters'
     assert.match(text, new RegExp('id="' + id + '"[^>]*placeholder="Все"'));
   }
   assert.match(text, /function resetFilters\(\)\{\['object','foreman','status','type','holder','from','to'\]\.forEach\(id=>el\(id\)\.value=''\)/);
-  const resetBody = text.match(/function resetFilters\(\)\{([\s\S]*?)\}\nel\('reset'\)/)[1];
+  const resetBody = text.match(/function resetFilters\(\)\{([\s\S]*?)\}\s*el\('reset'\)/)[1];
   assert.doesNotMatch(resetBody,/google\.script\.run|applyOperatorFilters/);
   assert.match(text,/fillValues\('statuses',data\.documentStatuses\|\|\[\]\)/);
   assert.match(text,/items\.filter\(item=>!item\.isAllObjects\)/);
@@ -1075,7 +1075,7 @@ test('85. save histories use centralized operation source and edit action', () =
 test('86. sidebar preserves lastAppliedFilters and reset remains local-only', () => {
   const text=fs.readFileSync('OperatorSidebar.html','utf8');
   assert.match(text,/let lastAppliedFilters=null/); assert.match(text,/lastAppliedFilters=filters/); assert.match(text,/saveOperatorCardChanges\(lastAppliedFilters\)/);
-  const reset=text.match(/function resetFilters\(\)\{([\s\S]*?)\}\nel\('reset'\)/)[1]; assert.ok(!reset.includes('lastAppliedFilters'));
+  const reset=text.match(/function resetFilters\(\)\{([\s\S]*?)\}\s*el\('reset'\)/)[1]; assert.ok(!reset.includes('lastAppliedFilters'));
 });
 
 function partialSaveFixture(ctx, options = {}) {
