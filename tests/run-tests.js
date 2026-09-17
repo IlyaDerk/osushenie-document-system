@@ -3102,15 +3102,19 @@ test('295. SHA-256 hashes exact final text and test marker changes it', () => {
   const prod=ctx.buildTelegramDeliveryPlan_(model,{businessDate:'2026-09-08',target:'g'}), testPlan=ctx.buildTelegramDeliveryPlan_(model,{businessDate:'2026-09-08',target:'g',testMode:true});
   assert.equal(prod[0].messageHash,ctx.hashTelegramMessage_(prod[0].messageText)); assert.notEqual(prod[0].messageHash,testPlan[0].messageHash);
 });
-test('296. Telegram transport enables HTML only for generated markup', () => {
+test('296. Telegram transport enables HTML only for the complete generated format', () => {
   const payloads=[]; const ctx=baseContext(); ctx.UrlFetchApp={fetch(url,input){payloads.push(JSON.parse(input.payload));return {getResponseCode:()=>200,getContentText:()=>'{"ok":true,"result":{"message_id":42}}'};}};
-  const html='• <b>15</b>. Статус. До 20.09.2026. <b>Сделать:</b> действие';
-  assert.equal(ctx.sendTelegramMessage_('token','-10099999999999999999',html).result,'SENT');
-  assert.equal(payloads[0].chat_id,'-10099999999999999999'); assert.equal(payloads[0].text,html); assert.equal(payloads[0].parse_mode,'HTML');
-  const legacy='legacy < value & other > value';
-  assert.equal(ctx.sendTelegramMessage_('token','group',legacy).result,'SENT');
-  assert.equal(payloads[1].text,legacy); assert.equal(payloads[1].parse_mode,undefined);
-  assert.equal(payloads.length,2);
+  const messages=[
+    '📄 Документооборот — 20.09.2026\n\n🏗 Объект: Альфа\n• <b>15</b>. Статус. До 20.09.2026. <b>Сделать:</b> действие',
+    'legacy plain text',
+    'legacy <b>старый текст</b>',
+    'legacy <b>Сделать:</b> без строки документа',
+    '• <b>Документ</b>. Статус. До 20.09.2026. <b>Сделать:</b> действие'
+  ];
+  messages.forEach(message=>assert.equal(ctx.sendTelegramMessage_('token','-10099999999999999999',message).result,'SENT'));
+  assert.deepEqual(payloads.map(payload=>payload.parse_mode),['HTML',undefined,undefined,undefined,'HTML']);
+  payloads.forEach((payload,index)=>assert.equal(payload.text,messages[index]));
+  assert.ok(payloads.every(payload=>payload.chat_id==='-10099999999999999999'));
 });
 test('297. Telegram explicit response classifications are normalized', () => {
   [[429,'FAILED_TECHNICAL',true],[500,'FAILED_TECHNICAL',true],[400,'FAILED_PERMANENT',false],[401,'FAILED_CONFIGURATION',false],[403,'FAILED_CONFIGURATION',false]].forEach(([status,result,retry])=>{

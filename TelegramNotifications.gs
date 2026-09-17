@@ -174,12 +174,18 @@ function telegramFailure_(status, code, text, token) {
     retryEligible: retry };
 }
 
+function telegramMessageUsesGeneratedHtml_(text) {
+  const messageText = String(text == null ? '' : text);
+  return messageText.indexOf('<b>Сделать:</b>') !== -1 &&
+    /(?:^|\n)• <b>/.test(messageText);
+}
+
 /** One invocation performs at most one fetch and never retries. */
 function sendTelegramMessage_(botToken, chatId, text) {
   const endpoint = 'https://api.telegram.org/bot' + botToken + '/sendMessage';
   const messageText = String(text);
   const payload = { chat_id: String(chatId), text: messageText };
-  if (messageText.indexOf('<b>') !== -1 && messageText.indexOf('</b>') !== -1) {
+  if (telegramMessageUsesGeneratedHtml_(messageText)) {
     payload.parse_mode = 'HTML';
   }
   let response;
