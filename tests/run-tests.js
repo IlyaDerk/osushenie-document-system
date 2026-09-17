@@ -388,8 +388,8 @@ test('29. archive cutoff selects only rows older than cutoff', () => {
   const ctx = baseContext();
   ctx.getSystemSpreadsheet_ = () => ({ getSpreadsheetTimeZone: () => 'UTC' });
   const cutoff = ctx.parseArchiveCutoffDate_('01.08.2026');
-  assert.ok(new Date(2026, 6, 31).getTime() < cutoff.getTime());
-  assert.ok(!(new Date(2026, 7, 1).getTime() < cutoff.getTime()));
+  assert.ok(new Date(Date.UTC(2026, 6, 31)).getTime() < cutoff.getTime());
+  assert.ok(!(new Date(Date.UTC(2026, 7, 1)).getTime() < cutoff.getTime()));
 });
 test('30. archive cutoff uses spreadsheet timezone and keeps cutoff-day rows active', () => {
   const ctx = baseContext();
@@ -1002,7 +1002,7 @@ test('75. sidebar groups creation dates and reset is local-only for all filters'
     assert.match(text, new RegExp('id="' + id + '"[^>]*placeholder="Все"'));
   }
   assert.match(text, /function resetFilters\(\)\{\['object','foreman','status','type','holder','from','to'\]\.forEach\(id=>el\(id\)\.value=''\)/);
-  const resetBody = text.match(/function resetFilters\(\)\{([\s\S]*?)\}\nel\('reset'\)/)[1];
+  const resetBody = text.match(/function resetFilters\(\)\{([\s\S]*?)\}\s*el\('reset'\)/)[1];
   assert.doesNotMatch(resetBody,/google\.script\.run|applyOperatorFilters/);
   assert.match(text,/fillValues\('statuses',data\.documentStatuses\|\|\[\]\)/);
   assert.match(text,/items\.filter\(item=>!item\.isAllObjects\)/);
@@ -1075,7 +1075,7 @@ test('85. save histories use centralized operation source and edit action', () =
 test('86. sidebar preserves lastAppliedFilters and reset remains local-only', () => {
   const text=fs.readFileSync('OperatorSidebar.html','utf8');
   assert.match(text,/let lastAppliedFilters=null/); assert.match(text,/lastAppliedFilters=filters/); assert.match(text,/saveOperatorCardChanges\(lastAppliedFilters\)/);
-  const reset=text.match(/function resetFilters\(\)\{([\s\S]*?)\}\nel\('reset'\)/)[1]; assert.ok(!reset.includes('lastAppliedFilters'));
+  const reset=text.match(/function resetFilters\(\)\{([\s\S]*?)\}\s*el\('reset'\)/)[1]; assert.ok(!reset.includes('lastAppliedFilters'));
 });
 
 function partialSaveFixture(ctx, options = {}) {
@@ -2743,14 +2743,15 @@ function notificationDocument(ctx, extra = {}) {
   return Object.assign({
     documentId:'DOC-1', objectId:'OBJ-1', objectName:'Объект 1',
     documentType:'Акт', documentNumber:'Акт №1', documentStatus:'На подготовке',
-    documentLocation:'В офисе', recordStatus:'Активная', implementationDays:'',
-    transferredAt:notificationDate(ctx,'2026-09-01T09:00:00Z'), statusChangedAt:''
+    documentLocation:'Голден Гейт', recordStatus:'Активная', implementationDays:'',
+    transferredAt:notificationDate(ctx,'2026-09-01T09:00:00Z'),
+    updatedAt:notificationDate(ctx,'2026-09-01T10:00:00Z'), statusChangedAt:''
   }, extra);
 }
 function notificationRule(extra = {}) {
   return Object.assign({
     id:'R-1', documentType:'Акт', documentStatus:'На подготовке',
-    documentLocation:'В офисе', implementationDays:7, action:'Передать',
+    documentLocation:'Голден Гейт', implementationDays:7, action:'Передать',
     notify:'Да', sheetRow:5
   }, extra);
 }
@@ -2791,24 +2792,30 @@ test('256. blank and invalid permission block only affected state with diagnosti
     const ctx=baseContext(), result=evaluateNotification(ctx,notificationDocument(ctx),[notificationRule({id:'R-BAD',sheetRow:17,notify:value})]);
     assert.equal(result.reason,'SKIPPED_INVALID_RULE_NOTIFICATION_PERMISSION');
     assert.equal(result.warnings[0].code,'INVALID_RULE_NOTIFICATION_PERMISSION');
-    assert.deepEqual(Object.assign({},result.warnings[0].details),{ruleId:'R-BAD',sheetRow:17,invalidValue:value,workflowConditions:['акт','на подготовке','в офисе']});
+    assert.deepEqual(Object.assign({},result.warnings[0].details),{ruleId:'R-BAD',sheetRow:17,invalidValue:value,workflowConditions:['акт','на подготовке','голден гейт']});
   }
 });
 test('257. inactive invalid permission is ignored and missing rule allows fallback notification', () => {
   const ctx=workflowRulesReadFixture([['R-OFF','Акт','На подготовке','В офисе',2,'','bad','Нет']]);
   const rules=ctx.readActiveDocumentWorkflowRules_(); assert.equal(rules.length,0);
   const result=evaluateNotification(ctx,notificationDocument(ctx),rules,'2026-09-08T12:00:00Z');
-  assert.equal(result.status,'CANDIDATE'); assert.equal(result.effectiveDays,7); assert.equal(result.action,'не настроено');
+  assert.equal(result.status,'CANDIDATE'); assert.equal(result.effectiveDays,7); assert.equal(result.action,'передать заказчику');
   assert.ok(result.warnings.some(w=>w.code==='WORKFLOW_RULE_MISSING'));
 });
-test('258. eligibility exclusions follow active, terminal, location and transfer order', () => {
+test('258. completion requires signed status and a normalized terminal location', () => {
   const ctx=baseContext();
   assert.equal(evaluateNotification(ctx,notificationDocument(ctx,{recordStatus:'Архивная'})).reason,'SKIPPED_INACTIVE_RECORD');
-  assert.equal(evaluateNotification(ctx,notificationDocument(ctx,{documentStatus:'Подписан с обеих сторон',statusChangedAt:'bad'})).reason,'SKIPPED_TERMINAL_STATUS');
-  assert.equal(evaluateNotification(ctx,notificationDocument(ctx,{documentLocation:'У заказчика'})).reason,'SKIPPED_DOCUMENT_NOT_IN_OFFICE');
-  assert.equal(evaluateNotification(ctx,notificationDocument(ctx,{transferredAt:''})).reason,'SKIPPED_TRANSFER_DATE_BLANK');
-  const invalid=evaluateNotification(ctx,notificationDocument(ctx,{transferredAt:'01.09.2026'}));
-  assert.equal(invalid.reason,'SKIPPED_INVALID_TRANSFER_DATE'); assert.equal(invalid.warnings[0].code,'INVALID_TRANSFER_DATE');
+  for (const documentLocation of ['Мытищи','  мытищи  ','Проспект Мира',' ПРОСПЕКТ   МИРА ']) {
+    const result=evaluateNotification(ctx,notificationDocument(ctx,{documentStatus:'Подписан с обеих сторон',documentLocation,statusChangedAt:'bad'}));
+    assert.equal(result.reason,'SKIPPED_WORKFLOW_COMPLETED',documentLocation);
+  }
+  for (const documentLocation of ['Голден Гейт','Адрес Клиента','У водителя','']) {
+    const result=evaluateNotification(ctx,notificationDocument(ctx,{documentStatus:'Подписан с обеих сторон',documentLocation}),[]);
+    assert.equal(result.status,'CANDIDATE',documentLocation); assert.equal(result.action,'забрать документы у заказчика');
+  }
+  for (const documentLocation of ['Мытищи','Проспект Мира']) {
+    assert.equal(evaluateNotification(ctx,notificationDocument(ctx,{documentLocation}),[]).status,'CANDIDATE');
+  }
 });
 test('259. workflow cycle handles blank, before same Moscow day and older transfer', () => {
   const ctx=baseContext(), business='2026-09-08T12:00:00Z';
@@ -2819,17 +2826,20 @@ test('259. workflow cycle handles blank, before same Moscow day and older transf
   const same=evaluateNotification(ctx,notificationDocument(ctx,{transferredAt:notificationDate(ctx,'2026-09-01T00:30:00Z'),statusChangedAt:notificationDate(ctx,'2026-09-01T20:30:00Z')}),[],business);
   assert.equal(same.status,'CANDIDATE');
 });
-test('260. invalid status-change date warns while terminal status wins first', () => {
+test('260. invalid status-change date warns while completed workflow wins first', () => {
   const ctx=baseContext(), invalid=evaluateNotification(ctx,notificationDocument(ctx,{statusChangedAt:'bad'}));
   assert.equal(invalid.reason,'SKIPPED_INVALID_STATUS_CHANGE_DATE'); assert.equal(invalid.warnings[0].code,'INVALID_STATUS_CHANGE_DATE');
-  const terminal=evaluateNotification(ctx,notificationDocument(ctx,{documentStatus:'Подписан с обеих сторон',statusChangedAt:'bad'}));
-  assert.equal(terminal.reason,'SKIPPED_TERMINAL_STATUS'); assert.equal(terminal.warnings.length,0);
+  const completed=evaluateNotification(ctx,notificationDocument(ctx,{documentStatus:'Подписан с обеих сторон',documentLocation:'Мытищи',statusChangedAt:'bad'}));
+  assert.equal(completed.reason,'SKIPPED_WORKFLOW_COMPLETED'); assert.equal(completed.warnings.length,0);
 });
-test('261. planner effective days preserve manual zero, manual positive, rule and fallback seven', () => {
+test('261. notification days use a valid document value and otherwise exactly seven', () => {
   let ctx=baseContext(); assert.equal(evaluateNotification(ctx,notificationDocument(ctx,{implementationDays:0})).effectiveDays,0);
   ctx=baseContext(); assert.equal(evaluateNotification(ctx,notificationDocument(ctx,{implementationDays:3}),undefined,'2026-09-04T12:00:00Z').effectiveDays,3);
-  ctx=baseContext(); assert.equal(evaluateNotification(ctx,notificationDocument(ctx),[notificationRule({implementationDays:3})],'2026-09-04T12:00:00Z').effectiveDays,3);
-  ctx=baseContext(); assert.equal(evaluateNotification(ctx,notificationDocument(ctx),[],'2026-09-08T12:00:00Z').effectiveDays,7);
+  for (const implementationDays of ['', '7', -1, 1.5]) {
+    ctx=baseContext();
+    const result=evaluateNotification(ctx,notificationDocument(ctx,{implementationDays}),[notificationRule({implementationDays:3})],'2026-09-08T12:00:00Z');
+    assert.equal(result.effectiveDays,7,String(implementationDays));
+  }
 });
 test('262. event selection covers D-7, D-3, today, overdue and irrelevant day', () => {
   const ctx=baseContext(), doc=notificationDocument(ctx,{implementationDays:7});
@@ -2847,9 +2857,59 @@ test('263. Moscow date ordinals handle UTC, month and year boundaries', () => {
   assert.equal(ctx.workflowNotificationDateKeyFromDay_(after.day+30),'2026-10-01');
   assert.equal(ctx.workflowNotificationDateOrdinal_(notificationDate(ctx,'2026-12-31T21:00:00Z')).key,'2027-01-01');
 });
-test('264. blank action warns without blocking notification', () => {
+test('264. centralized default actions apply unless a nonblank rule action overrides', () => {
+  const expected={
+    'На подготовке':'передать заказчику',
+    'Передан заказчику':'подписать с обеих сторон',
+    'Требует исправления':'исправить документ',
+    'На согласовании у заказчика':'уточнить сроки',
+    'Подписан у заказчика':'забрать документы у заказчика',
+    'Подписан с обеих сторон':'забрать документы у заказчика'
+  };
+  Object.keys(expected).forEach(status=>{
+    const ctx=baseContext(), document=notificationDocument(ctx,{documentStatus:status});
+    assert.equal(evaluateNotification(ctx,document,[]).action,expected[status],status);
+    const rule=notificationRule({documentStatus:status,action:'явное действие'});
+    assert.equal(evaluateNotification(ctx,document,[rule]).action,'явное действие',status);
+  });
+});
+test('264a. waiting-for-fill has no invented default and keeps the safe warning', () => {
   const ctx=baseContext(), result=evaluateNotification(ctx,notificationDocument(ctx),[notificationRule({action:''})]);
-  assert.equal(result.status,'CANDIDATE'); assert.equal(result.action,'не настроено');
+  assert.equal(result.status,'CANDIDATE'); assert.equal(result.action,'передать заказчику');
+  assert.ok(!result.warnings.some(w=>w.code==='WORKFLOW_ACTION_MISSING'));
+  const waiting=evaluateNotification(ctx,notificationDocument(ctx,{documentStatus:'Ожидает заполнения'}),[
+    notificationRule({documentStatus:'Ожидает заполнения',action:''})
+  ]);
+  assert.equal(waiting.action,'не настроено');
+  assert.equal(waiting.status,'CANDIDATE');
+  assert.ok(waiting.warnings.some(w=>w.code==='WORKFLOW_ACTION_MISSING'));
+});
+test('264b. base date prioritizes valid transfer and falls back to updated date', () => {
+  const ctx=baseContext(), transferred=notificationDate(ctx,'2026-09-17T09:00:00Z'), updated=notificationDate(ctx,'2026-09-20T09:00:00Z');
+  const primary=evaluateNotification(ctx,notificationDocument(ctx,{transferredAt:transferred,updatedAt:updated}),[],'2026-09-24T12:00:00Z');
+  assert.equal(primary.baseDateSource,'transferredAt'); assert.equal(primary.controlDateKey,'2026-09-24');
+  const blank=evaluateNotification(ctx,notificationDocument(ctx,{transferredAt:'',updatedAt:transferred}),[],'2026-09-24T12:00:00Z');
+  assert.equal(blank.baseDateSource,'updatedAt'); assert.equal(blank.effectiveDays,7); assert.equal(blank.controlDateKey,'2026-09-24');
+  const invalid=evaluateNotification(ctx,notificationDocument(ctx,{transferredAt:'17.09.2026',updatedAt:transferred}),[],'2026-09-24T12:00:00Z');
+  assert.equal(invalid.baseDateSource,'updatedAt'); assert.equal(invalid.controlDateKey,'2026-09-24');
+  assert.ok(invalid.warnings.some(w=>w.code==='INVALID_TRANSFER_DATE_USING_UPDATED_AT'));
+});
+test('264c. invalid transfer and update dates fail closed with a clear warning', () => {
+  const ctx=baseContext(), result=evaluateNotification(ctx,notificationDocument(ctx,{transferredAt:'bad',updatedAt:'also bad'}),[]);
+  assert.equal(result.reason,'SKIPPED_BASE_DATE_UNAVAILABLE');
+  assert.ok(result.warnings.some(w=>w.code==='WORKFLOW_BASE_DATE_UNAVAILABLE'));
+});
+test('264d. notification reader resolves updated-at by its system header', () => {
+  const ctx=baseContext(), headers=['Статус записи','Дата обновления','ID документа','ID объекта','Название объекта','Тип документа','Номер документа','Статус документа','Где документ','Когда передан','Дней на реализацию','Дата изменения статуса документа'];
+  const updated=notificationDate(ctx,'2026-09-17T09:00:00Z');
+  const row=['Активная',updated,'D','O','Объект','Акт','1','На подготовке','Голден Гейт','', '', ''];
+  ctx.getSystemSheetContext_=()=>({headers,headerMap:Object.fromEntries(headers.map((h,i)=>[h,i+1])),config:{dataStartRow:3},sheet:{getLastRow:()=>3,getRange:()=>({getValues:()=>[row]})}});
+  const result=ctx.readWorkflowNotificationDocuments_()[0];
+  assert.equal(result.documentId,'D'); assert.equal(result.updatedAt.getTime(),updated.getTime());
+});
+test('264e. blank action warning is retained only when no default exists', () => {
+  const ctx=baseContext(), result=evaluateNotification(ctx,notificationDocument(ctx,{documentStatus:'Ожидает заполнения'}),[notificationRule({documentStatus:'Ожидает заполнения',action:''})]);
+  assert.equal(result.action,'не настроено');
   assert.ok(result.warnings.some(w=>w.code==='WORKFLOW_ACTION_MISSING'));
 });
 test('265. pure evaluation and deterministic model do not mutate inputs', () => {
@@ -3029,12 +3089,16 @@ test('288. config requirements distinguish dry run and test send without exposin
   assert.doesNotThrow(()=>ctx.requireWorkflowNotificationConfig_({chatId:'group',botToken:'',enabled:false},false));
   assert.throws(()=>ctx.requireWorkflowNotificationConfig_({chatId:'group',botToken:''},true),/BOT_TOKEN/);
 });
-test('289. formatter preserves literal document numbers and handles a blank number safely', () => {
+test('289. formatter uses compact numbered lines and handles a blank number safely', () => {
   const ctx=baseContext(), candidates=[telegramCandidate({documentId:'D1',documentNumber:'15'}),telegramCandidate({documentId:'D2',documentNumber:'№15'}),telegramCandidate({documentId:'D3',documentNumber:'',action:'не настроено'})];
   const text=ctx.buildTelegramPhysicalMessages_(telegramModel(ctx,candidates),{businessDate:'2026-09-08',operatorCardUrl:'https://sheet/#gid=7'})[0].text;
-  assert.match(text,/🏗 Объект: Альфа/); assert.match(text,/• Акт — 15\n/); assert.match(text,/• Акт — №15\n/); assert.match(text,/• Акт\n/); assert.doesNotMatch(text,/• Акт — №№15/);
-  assert.match(text,/Передан: 08\.09\.2026/); assert.match(text,/Контроль: 15\.09\.2026/);
-  assert.match(text,/Срок: через 7 дней/); assert.match(text,/Действие: не настроено/); assert.ok(text.endsWith('https://sheet/#gid=7'));
+  assert.ok(text.startsWith('🏗 Объект: Альфа\n'));
+  assert.match(text,/1\. Акт - не настроено\. До 15\.09\.2026/);
+  assert.match(text,/2\. Акт 15 - Передать заказчику\. До 15\.09\.2026/);
+  assert.match(text,/3\. Акт №15 - Передать заказчику\. До 15\.09\.2026/);
+  assert.doesNotMatch(text,/Статус:|Где:|Передан:|Контроль:|Просрочено:|Действие:/);
+  assert.equal((text.match(/Ссылка на таблицу:/g)||[]).length,1);
+  assert.ok(text.endsWith('Ссылка на таблицу: https://sheet/#gid=7'));
 });
 test('290. deadline wording covers D-3, today and overdue with Russian inflection', () => {
   const ctx=baseContext(); assert.equal(ctx.telegramDeadlineText_(3),'Срок: через 3 дня');
@@ -3049,7 +3113,9 @@ test('292. splitting caps every part, labels final count, repeats context and pu
   const ctx=baseContext(), candidates=Array.from({length:30},(_,i)=>telegramCandidate({documentId:'D'+i,documentNumber:String(i),action:'X'.repeat(250)}));
   const parts=ctx.buildTelegramPhysicalMessages_(telegramModel(ctx,candidates),{businessDate:'2026-09-08',operatorCardUrl:'https://card',testMode:true});
   assert.ok(parts.length>1); parts.forEach((part,i)=>{assert.ok(part.text.length<=3900); assert.ok(part.text.startsWith('🧪 ТЕСТ')); assert.match(part.text,new RegExp('Часть '+(i+1)+'/'+parts.length)); assert.match(part.text,/🏗 Объект:/);});
-  assert.ok(parts.at(-1).text.includes('https://card')); assert.ok(parts.slice(0,-1).every(p=>!p.text.includes('https://card')));
+  assert.ok(parts.at(-1).text.endsWith('Ссылка на таблицу: https://card'));
+  assert.ok(parts.slice(0,-1).every(p=>!p.text.includes('Ссылка на таблицу:')));
+  assert.equal(parts.reduce((count,part)=>count+(part.text.match(/Ссылка на таблицу:/g)||[]).length,0),1);
 });
 test('293. oversized document fails closed instead of creating duplicate delivery references', () => {
   const ctx=baseContext(), candidate=telegramCandidate({documentId:'DOC-OVERSIZED',objectId:'OBJ-LARGE',action:'Z'.repeat(9000)});
@@ -3169,19 +3235,38 @@ test('309. retry eligibility is technical-only, due after 60 minutes, and blocks
   const unknown=ctx.buildDeliveryResultRecord_(Object.assign({recordId:'U',attemptNumber:1,result:'UNKNOWN_DELIVERY_OUTCOME'},base));
   assert.equal(ctx.workflowRetryCandidates_([prepared,failed,unknown],now).length,0);
 });
-test('310. stale validation covers approved state failures but missing rule and blank action remain valid', () => {
+test('310. stale validation uses combined completion and preserves ordinary state checks', () => {
   const ctx=baseContext(), doc=notificationDocument(ctx,{documentStatus:'На подготовке'}), reservation={documentId:doc.documentId,documentStatus:'На подготовке'};
   assert.deepEqual(Array.from(ctx.workflowRetryStaleReasons_([reservation],[doc],[])),[]);
   assert.deepEqual(Array.from(ctx.workflowRetryStaleReasons_([reservation],[doc],[notificationRule({action:''})])),[]);
   assert.match(ctx.workflowRetryStaleReasons_([reservation],[],[]).join(','),/MISSING_DOCUMENT/);
   assert.match(ctx.workflowRetryStaleReasons_([reservation],[doc,doc],[]).join(','),/DUPLICATE/);
   assert.match(ctx.workflowRetryStaleReasons_([reservation],[Object.assign({},doc,{recordStatus:'Архивная'})],[]).join(','),/INACTIVE/);
-  assert.match(ctx.workflowRetryStaleReasons_([reservation],[Object.assign({},doc,{documentStatus:'Подписан с обеих сторон'})],[]).join(','),/TERMINAL|STATUS_CHANGED/);
-  assert.match(ctx.workflowRetryStaleReasons_([reservation],[Object.assign({},doc,{documentLocation:'У заказчика'})],[]).join(','),/LOCATION/);
-  assert.match(ctx.workflowRetryStaleReasons_([reservation],[Object.assign({},doc,{transferredAt:''})],[]).join(','),/TRANSFER_BLANK/);
+  assert.match(ctx.workflowRetryStaleReasons_([reservation],[Object.assign({},doc,{documentStatus:'Подписан с обеих сторон',documentLocation:'Мытищи'})],[]).join(','),/WORKFLOW_COMPLETED|STATUS_CHANGED/);
+  assert.deepEqual(Array.from(ctx.workflowRetryStaleReasons_([reservation],[Object.assign({},doc,{documentLocation:'У водителя'})],[])),[]);
+  assert.deepEqual(Array.from(ctx.workflowRetryStaleReasons_([reservation],[Object.assign({},doc,{transferredAt:''})],[])),[]);
+  assert.match(ctx.workflowRetryStaleReasons_([reservation],[Object.assign({},doc,{transferredAt:'bad',updatedAt:'bad'})],[]).join(','),/BASE_DATE_UNAVAILABLE/);
   assert.match(ctx.workflowRetryStaleReasons_([reservation],[doc],[notificationRule({notify:'Нет'})]).join(','),/RULE_NOTIFY_NO/);
   assert.match(ctx.workflowRetryStaleReasons_([reservation],[doc],[notificationRule({notify:''})]).join(','),/RULE_NOTIFY_INVALID/);
   assert.match(ctx.workflowRetryStaleReasons_([reservation],[doc],[notificationRule(),notificationRule({id:'R2'})]).join(','),/RULE_AMBIGUOUS/);
+});
+test('310a. retry completes signed documents only at either terminal location', () => {
+  const ctx=baseContext(), status='Подписан с обеих сторон', reservation={documentId:'DOC-1',documentStatus:status};
+  for (const documentLocation of ['Мытищи','Проспект Мира']) {
+    const reasons=ctx.workflowRetryStaleReasons_([reservation],[notificationDocument(ctx,{documentStatus:status,documentLocation})],[]).join(',');
+    assert.match(reasons,/WORKFLOW_COMPLETED/,documentLocation);
+  }
+  for (const documentLocation of ['Голден Гейт','Адрес Клиента','У водителя','']) {
+    const reasons=ctx.workflowRetryStaleReasons_([reservation],[notificationDocument(ctx,{documentStatus:status,documentLocation})],[]).join(',');
+    assert.doesNotMatch(reasons,/WORKFLOW_COMPLETED|TERMINAL|LOCATION/,documentLocation);
+  }
+});
+test('310b. retry does not complete unsigned documents at terminal locations', () => {
+  const ctx=baseContext(), reservation={documentId:'DOC-1',documentStatus:'На подготовке'};
+  for (const documentLocation of ['Мытищи','Проспект Мира']) {
+    const reasons=ctx.workflowRetryStaleReasons_([reservation],[notificationDocument(ctx,{documentLocation})],[]).join(',');
+    assert.doesNotMatch(reasons,/WORKFLOW_COMPLETED/);
+  }
 });
 test('311. whole stale multipart reservation creates one attempt-2 skip and no fetch', () => {
   const ctx=baseContext(), old=notificationDate(ctx,'2020-01-01T00:00:00Z'), prepared={recordId:'P',recordType:'DELIVERY_PREPARED',runId:'R',deliveryId:'D',timestamp:old,notificationDate:'2026-09-08',channel:'TELEGRAM',target:'T',result:'PREPARED',attemptNumber:1,messageHash:'hash',messageText:'ORIGINAL'};

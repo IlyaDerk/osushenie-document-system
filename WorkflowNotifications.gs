@@ -2,8 +2,19 @@
 const WORKFLOW_NOTIFICATION_ = Object.freeze({
   TIMEZONE: 'Europe/Moscow',
   ACTIVE_RECORD: SYSTEM_CONFIG.VALUES.ACTIVE_RECORD_STATUS,
-  TERMINAL_STATUS: 'Подписан с обеих сторон',
-  OFFICE_LOCATION: 'В офисе',
+  SIGNED_STATUS: 'Подписан с обеих сторон',
+  TERMINAL_DOCUMENT_LOCATIONS: Object.freeze([
+    'Мытищи',
+    'Проспект Мира'
+  ]),
+  DEFAULT_ACTIONS: Object.freeze({
+    'на подготовке': 'передать заказчику',
+    'передан заказчику': 'подписать с обеих сторон',
+    'требует исправления': 'исправить документ',
+    'подписан с обеих сторон': 'забрать документы у заказчика',
+    'на согласовании у заказчика': 'уточнить сроки',
+    'подписан у заказчика': 'забрать документы у заказчика'
+  }),
   YES: 'Да',
   NO: 'Нет',
   ACTION_NOT_CONFIGURED: 'не настроено'
@@ -57,32 +68,79 @@ function workflowNotificationEvent_(daysRemaining) {
   return null;
 }
 
+function workflowNotificationIsActualDate_(value) {
+  return value instanceof Date && !isNaN(value.getTime());
+}
+
+function workflowNotificationIsTerminalLocation_(value) {
+  const folded = workflowNotificationFold_(value);
+  return WORKFLOW_NOTIFICATION_.TERMINAL_DOCUMENT_LOCATIONS.some(function (location) {
+    return workflowNotificationFold_(location) === folded;
+  });
+}
+
+function workflowNotificationIsCompleted_(document) {
+  return workflowNotificationFold_(document.documentStatus) ===
+      workflowNotificationFold_(WORKFLOW_NOTIFICATION_.SIGNED_STATUS) &&
+    workflowNotificationIsTerminalLocation_(document.documentLocation);
+}
+
+function workflowNotificationResolveBaseDate_(document) {
+  if (workflowNotificationIsActualDate_(document.transferredAt)) {
+    return { valid: true, value: document.transferredAt, source: 'transferredAt', warnings: [] };
+  }
+  const warnings = [];
+  if (!documentWorkflowIsBlank_(document.transferredAt)) {
+    warnings.push(workflowNotificationWarning_(
+      'INVALID_TRANSFER_DATE_USING_UPDATED_AT',
+      'Некорректное значение «' + H.TRANSFERRED_AT +
+        '»: для расчёта используется «' + H.UPDATED_AT + '».'
+    ));
+  }
+  if (workflowNotificationIsActualDate_(document.updatedAt)) {
+    return { valid: true, value: document.updatedAt, source: 'updatedAt', warnings: warnings };
+  }
+  warnings.push(workflowNotificationWarning_(
+    'WORKFLOW_BASE_DATE_UNAVAILABLE',
+    'Невозможно определить базовую дату: «' + H.TRANSFERRED_AT +
+      '» и «' + H.UPDATED_AT + '» не содержат корректную дату.'
+  ));
+  return { valid: false, value: null, source: '', warnings: warnings };
+}
+
+function workflowNotificationDefaultAction_(documentStatus) {
+  return WORKFLOW_NOTIFICATION_.DEFAULT_ACTIONS[workflowNotificationFold_(documentStatus)] || '';
+}
+
+function workflowNotificationResolveAction_(documentStatus, rule) {
+  const explicitAction = rule ? String(rule.action || '').trim() : '';
+  return explicitAction || workflowNotificationDefaultAction_(documentStatus) ||
+    WORKFLOW_NOTIFICATION_.ACTION_NOT_CONFIGURED;
+}
+
+function workflowNotificationEffectiveDays_(value) {
+  return !documentWorkflowIsBlank_(value) && isValidImplementationDays_(value) ? value : 7;
+}
+
 function evaluateWorkflowNotification_(document, activeRules, businessAt) {
   const warnings = [];
   const fold = workflowNotificationFold_;
   if (fold(document.recordStatus) !== fold(WORKFLOW_NOTIFICATION_.ACTIVE_RECORD)) {
     return workflowNotificationSkip_('SKIPPED_INACTIVE_RECORD', document);
   }
-  if (fold(document.documentStatus) === fold(WORKFLOW_NOTIFICATION_.TERMINAL_STATUS)) {
-    return workflowNotificationSkip_('SKIPPED_TERMINAL_STATUS', document);
-  }
-  if (fold(document.documentLocation) !== fold(WORKFLOW_NOTIFICATION_.OFFICE_LOCATION)) {
-    return workflowNotificationSkip_('SKIPPED_DOCUMENT_NOT_IN_OFFICE', document);
-  }
-  if (documentWorkflowIsBlank_(document.transferredAt)) {
-    return workflowNotificationSkip_('SKIPPED_TRANSFER_DATE_BLANK', document);
-  }
-  if (!isValidTransferredAt_(document.transferredAt)) {
-    warnings.push(workflowNotificationWarning_(
-      'INVALID_TRANSFER_DATE', 'Некорректное значение «' + H.TRANSFERRED_AT + '».'
-    ));
-    return workflowNotificationSkip_(
-      'SKIPPED_INVALID_TRANSFER_DATE', document, warnings
-    );
+  if (workflowNotificationIsCompleted_(document)) {
+    return workflowNotificationSkip_('SKIPPED_WORKFLOW_COMPLETED', document);
   }
 
-  const transferDate = workflowNotificationDateOrdinal_(document.transferredAt);
-  if (!documentWorkflowIsBlank_(document.statusChangedAt)) {
+  const baseDate = workflowNotificationResolveBaseDate_(document);
+  Array.prototype.push.apply(warnings, baseDate.warnings);
+  if (!baseDate.valid) {
+    return workflowNotificationSkip_('SKIPPED_BASE_DATE_UNAVAILABLE', document, warnings);
+  }
+
+  const baseDateOrdinal = workflowNotificationDateOrdinal_(baseDate.value);
+  if (baseDate.source === 'transferredAt' &&
+      !documentWorkflowIsBlank_(document.statusChangedAt)) {
     if (!isValidTransferredAt_(document.statusChangedAt)) {
       warnings.push(workflowNotificationWarning_(
         'INVALID_STATUS_CHANGE_DATE',
@@ -93,7 +151,7 @@ function evaluateWorkflowNotification_(document, activeRules, businessAt) {
       );
     }
     const statusDate = workflowNotificationDateOrdinal_(document.statusChangedAt);
-    if (transferDate.day < statusDate.day) {
+    if (baseDateOrdinal.day < statusDate.day) {
       warnings.push(workflowNotificationWarning_(
         'WORKFLOW_CYCLE_NOT_STARTED',
         'Требуется указать "' + H.TRANSFERRED_AT + '" для текущего статуса'
@@ -135,22 +193,17 @@ function evaluateWorkflowNotification_(document, activeRules, businessAt) {
     ));
   }
 
-  let action = rule ? String(rule.action || '').trim() : '';
-  if (!action) {
-    action = WORKFLOW_NOTIFICATION_.ACTION_NOT_CONFIGURED;
-    if (rule) {
+  const action = workflowNotificationResolveAction_(document.documentStatus, rule);
+  if (action === WORKFLOW_NOTIFICATION_.ACTION_NOT_CONFIGURED && rule) {
       warnings.push(workflowNotificationWarning_(
         'WORKFLOW_ACTION_MISSING', 'В active rule не настроено «' + H.ACTION + '».',
         { ruleId: rule.id, sheetRow: rule.sheetRow }
       ));
-    }
   }
 
-  const effectiveDays = getEffectiveImplementationDays_(
-    document.implementationDays, rule
-  );
+  const effectiveDays = workflowNotificationEffectiveDays_(document.implementationDays);
   const businessDate = workflowNotificationDateOrdinal_(businessAt);
-  const controlDay = transferDate.day + effectiveDays;
+  const controlDay = baseDateOrdinal.day + effectiveDays;
   const daysRemaining = controlDay - businessDate.day;
   const event = workflowNotificationEvent_(daysRemaining);
   if (!event) {
@@ -166,6 +219,9 @@ function evaluateWorkflowNotification_(document, activeRules, businessAt) {
     documentStatus: String(document.documentStatus || '').trim(),
     location: String(document.documentLocation || '').trim(),
     transferredAt: document.transferredAt,
+    updatedAt: document.updatedAt,
+    baseDate: baseDate.value,
+    baseDateSource: baseDate.source,
     statusChangedAt: document.statusChangedAt,
     effectiveDays: effectiveDays,
     controlDateKey: workflowNotificationDateKeyFromDay_(controlDay),
