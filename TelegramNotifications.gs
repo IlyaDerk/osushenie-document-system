@@ -68,13 +68,12 @@ function formatTelegramDocumentBlock_(candidate) {
   const type = String(candidate.documentType || '').trim() || 'Документ';
   const number = String(candidate.documentNumber || '').trim();
   return [
-    '• ' + type + (number ? ' — ' + number : ''),
-    '  Статус: ' + (String(candidate.documentStatus || '').trim() || 'не указан'),
-    '  Где: ' + (String(candidate.location || '').trim() || 'не указано'),
-    '  Передан: ' + telegramCandidateDate_(candidate.transferredAt),
-    '  Контроль: ' + telegramDisplayDate_(candidate.controlDateKey),
-    '  ' + telegramDeadlineText_(candidate.daysRemaining),
-    '  Действие: ' + (String(candidate.action || '').trim() || WORKFLOW_NOTIFICATION_.ACTION_NOT_CONFIGURED)
+    '• ' + type + (number ? ' — ' + number : '') +
+      ' | ' + (String(candidate.documentStatus || '').trim() || 'статус не указан') +
+      ' | ' + (String(candidate.location || '').trim() || 'место не указано'),
+    '  ' + telegramDeadlineText_(candidate.daysRemaining) +
+      ' (контроль ' + telegramDisplayDate_(candidate.controlDateKey) + ')',
+    '  → ' + (String(candidate.action || '').trim() || WORKFLOW_NOTIFICATION_.ACTION_NOT_CONFIGURED)
   ].join('\n');
 }
 
