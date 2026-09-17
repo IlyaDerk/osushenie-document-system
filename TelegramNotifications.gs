@@ -49,38 +49,39 @@ function telegramCandidateDate_(value) {
   return telegramDisplayDate_(value);
 }
 
-function telegramRussianDays_(number) {
-  const n = Math.abs(Number(number)), tail = n % 100, last = n % 10;
-  if (tail >= 11 && tail <= 14) return n + ' дней';
-  if (last === 1) return n + ' день';
-  if (last >= 2 && last <= 4) return n + ' дня';
-  return n + ' дней';
+function telegramEscapeHtml_(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
-function telegramDeadlineText_(daysRemaining) {
+function telegramDeadlineText_(controlDateKey, daysRemaining) {
   const days = Number(daysRemaining);
-  if (days === 0) return 'Срок: сегодня';
-  if (days < 0) return 'Просрочено: ' + telegramRussianDays_(-days);
-  return 'Срок: через ' + telegramRussianDays_(days);
+  const deadline = 'До ' + telegramDisplayDate_(controlDateKey) + '.';
+  if (days === 0) return deadline + ' Сегодня.';
+  if (days < 0) return deadline + ' Просрочено.';
+  return deadline;
 }
 
 function formatTelegramDocumentBlock_(candidate) {
-  const type = String(candidate.documentType || '').trim() || 'Документ';
   const number = String(candidate.documentNumber || '').trim();
-  return [
-    '• ' + type + (number ? ' — ' + number : '') +
-      ' | ' + (String(candidate.documentStatus || '').trim() || 'статус не указан') +
-      ' | ' + (String(candidate.location || '').trim() || 'место не указано'),
-    '  ' + telegramDeadlineText_(candidate.daysRemaining) +
-      ' (контроль ' + telegramDisplayDate_(candidate.controlDateKey) + ')',
-    '  → ' + (String(candidate.action || '').trim() || WORKFLOW_NOTIFICATION_.ACTION_NOT_CONFIGURED)
-  ].join('\n');
+  const type = String(candidate.documentType || '').trim();
+  const title = number || type || 'Документ';
+  const status = String(candidate.documentStatus || '').trim() || 'статус не указан';
+  const action = String(candidate.action || '').trim() || WORKFLOW_NOTIFICATION_.ACTION_NOT_CONFIGURED;
+  return '• <b>' + telegramEscapeHtml_(title) + '</b>. ' +
+    telegramEscapeHtml_(status) + '. ' +
+    telegramDeadlineText_(candidate.controlDateKey, candidate.daysRemaining) +
+    ' <b>Сделать:</b> ' + telegramEscapeHtml_(action);
 }
 
 function telegramObjectHeading_(object) {
   const name = String(object.objectName || '').trim();
   const id = String(object.objectId || '').trim();
-  return '🏗 Объект: ' + (name || (id ? '№ ' + id : 'без названия'));
+  return '🏗 Объект: ' + telegramEscapeHtml_(
+    name || (id ? '№ ' + id : 'без названия')
+  );
 }
 
 function telegramHeader_(businessDate, testMode, partNumber, partCount) {
@@ -94,7 +95,8 @@ function telegramHeader_(businessDate, testMode, partNumber, partCount) {
 /** Pure deterministic formatter/splitter. */
 function buildTelegramPhysicalMessages_(model, options) {
   const input = options || {}, testMode = input.testMode === true;
-  const footer = input.operatorCardUrl ? 'Открыть карточку операциониста: ' + input.operatorCardUrl : '';
+  const footer = input.operatorCardUrl ? 'Открыть карточку операциониста: ' +
+    telegramEscapeHtml_(input.operatorCardUrl) : '';
   const objects = (model && model.objects) || [];
   if (!objects.length && !testMode) return [];
   const headerReserve = telegramHeader_(input.businessDate, testMode, 9999, 9999).length + 2;
@@ -105,13 +107,13 @@ function buildTelegramPhysicalMessages_(model, options) {
   objects.forEach(function (object) {
     const heading = telegramObjectHeading_(object);
     const documents = (object.documents || []).map(formatTelegramDocumentBlock_);
-    const whole = [heading].concat(documents).join('\n\n');
+    const whole = [heading].concat(documents).join('\n');
     if (whole.length <= bodyLimit) {
       segments.push({ text: whole, references: (object.documents || []).slice() });
       return;
     }
     documents.forEach(function (documentText, index) {
-      const block = heading + '\n\n' + documentText;
+      const block = heading + '\n' + documentText;
       const candidate = object.documents[index];
       if (block.length > bodyLimit) {
         throw new Error('Telegram document block exceeds safe limit: documentId=' +
@@ -172,13 +174,24 @@ function telegramFailure_(status, code, text, token) {
     retryEligible: retry };
 }
 
+function telegramMessageUsesGeneratedHtml_(text) {
+  const messageText = String(text == null ? '' : text);
+  return messageText.indexOf('<b>Сделать:</b>') !== -1 &&
+    /(?:^|\n)• <b>/.test(messageText);
+}
+
 /** One invocation performs at most one fetch and never retries. */
 function sendTelegramMessage_(botToken, chatId, text) {
   const endpoint = 'https://api.telegram.org/bot' + botToken + '/sendMessage';
+  const messageText = String(text);
+  const payload = { chat_id: String(chatId), text: messageText };
+  if (telegramMessageUsesGeneratedHtml_(messageText)) {
+    payload.parse_mode = 'HTML';
+  }
   let response;
   try {
     response = UrlFetchApp.fetch(endpoint, { method: 'post', contentType: 'application/json',
-      payload: JSON.stringify({ chat_id: String(chatId), text: String(text) }),
+      payload: JSON.stringify(payload),
       muteHttpExceptions: true });
   } catch (error) {
     return telegramFailure_('', '', error && error.message ? error.message : error, botToken);
