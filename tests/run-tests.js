@@ -3050,16 +3050,27 @@ test('288. config requirements distinguish dry run and test send without exposin
   assert.doesNotThrow(()=>ctx.requireWorkflowNotificationConfig_({chatId:'group',botToken:'',enabled:false},false));
   assert.throws(()=>ctx.requireWorkflowNotificationConfig_({chatId:'group',botToken:''},true),/BOT_TOKEN/);
 });
-test('289. formatter preserves literal document numbers and handles a blank number safely', () => {
-  const ctx=baseContext(), candidates=[telegramCandidate({documentId:'D1',documentNumber:'15'}),telegramCandidate({documentId:'D2',documentNumber:'№15'}),telegramCandidate({documentId:'D3',documentNumber:'',action:'не настроено'})];
-  const text=ctx.buildTelegramPhysicalMessages_(telegramModel(ctx,candidates),{businessDate:'2026-09-08',operatorCardUrl:'https://sheet/#gid=7'})[0].text;
-  assert.match(text,/🏗 Объект: Альфа/); assert.match(text,/• Акт — 15 \|/); assert.match(text,/• Акт — №15 \|/); assert.match(text,/• Акт \|/); assert.doesNotMatch(text,/• Акт — №№15/);
-  assert.match(text,/На согласовании \| В офисе/); assert.match(text,/Срок: через 7 дней \(контроль 15\.09\.2026\)/);
-  assert.match(text,/→ не настроено/); assert.ok(text.endsWith('https://sheet/#gid=7'));
+test('289. compact formatter prefers document number, falls back safely, and escapes HTML', () => {
+  const ctx=baseContext(), candidates=[
+    telegramCandidate({documentId:'D1',objectName:'Альфа & <стройка>',documentNumber:'Акт <№15>',documentType:'Тип не показывать',documentStatus:'На & согласовании',controlDateKey:'2026-09-08',daysRemaining:-9,action:'подготовить <документы>'}),
+    telegramCandidate({documentId:'D2',objectName:'Альфа & <стройка>',documentNumber:'',documentType:'Счёт & акт',controlDateKey:'2026-09-17',daysRemaining:0,action:''}),
+    telegramCandidate({documentId:'D3',objectName:'Альфа & <стройка>',documentNumber:'',documentType:'',controlDateKey:'2026-09-20',daysRemaining:3})
+  ];
+  const text=ctx.buildTelegramPhysicalMessages_(telegramModel(ctx,candidates),{businessDate:'2026-09-17',operatorCardUrl:'https://sheet/?a=1&b=<2>'})[0].text;
+  assert.match(text,/🏗 Объект: Альфа &amp; &lt;стройка&gt;/);
+  assert.match(text,/• <b>Акт &lt;№15&gt;<\/b>\. На &amp; согласовании\. До <u>08\.09\.2026<\/u>\. Просрочено\. <b>Сделать:<\/b> подготовить &lt;документы&gt;/);
+  assert.match(text,/• <b>Счёт &amp; акт<\/b>\./); assert.match(text,/До <u>17\.09\.2026<\/u>\. Сегодня\./);
+  assert.match(text,/• <b>Документ<\/b>\./); assert.match(text,/До <u>20\.09\.2026<\/u>\. <b>Сделать:<\/b> Передать заказчику/);
+  assert.doesNotMatch(text,/Тип не показывать|Просрочено: 9 дней|В офисе|Передан|контроль|→/);
+  assert.ok(text.endsWith('https://sheet/?a=1&amp;b=&lt;2&gt;'));
+  assert.doesNotMatch(text,/🏗 Объект:[^\n]+\n\n• /);
+  candidates.forEach(candidate=>assert.doesNotMatch(ctx.formatTelegramDocumentBlock_(candidate),/\n/));
 });
-test('290. deadline wording covers D-3, today and overdue with Russian inflection', () => {
-  const ctx=baseContext(); assert.equal(ctx.telegramDeadlineText_(3),'Срок: через 3 дня');
-  assert.equal(ctx.telegramDeadlineText_(0),'Срок: сегодня'); assert.equal(ctx.telegramDeadlineText_(-1),'Просрочено: 1 день');
+test('290. deadline wording includes the date and only the required state marker', () => {
+  const ctx=baseContext();
+  assert.equal(ctx.telegramDeadlineText_('2026-09-08',-9),'До <u>08.09.2026</u>. Просрочено.');
+  assert.equal(ctx.telegramDeadlineText_('2026-09-17',0),'До <u>17.09.2026</u>. Сегодня.');
+  assert.equal(ctx.telegramDeadlineText_('2026-09-20',3),'До <u>20.09.2026</u>.');
 });
 test('291. formatter groups multiple objects deterministically', () => {
   const ctx=baseContext(), candidates=[telegramCandidate({objectId:'2',objectName:'Бета'}),telegramCandidate({documentId:'D2',objectId:'1',objectName:'Альфа'})];
@@ -3091,10 +3102,19 @@ test('295. SHA-256 hashes exact final text and test marker changes it', () => {
   const prod=ctx.buildTelegramDeliveryPlan_(model,{businessDate:'2026-09-08',target:'g'}), testPlan=ctx.buildTelegramDeliveryPlan_(model,{businessDate:'2026-09-08',target:'g',testMode:true});
   assert.equal(prod[0].messageHash,ctx.hashTelegramMessage_(prod[0].messageText)); assert.notEqual(prod[0].messageHash,testPlan[0].messageHash);
 });
-test('296. Telegram transport success uses string chat and exactly one plain JSON request', () => {
-  let calls=0, options; const ctx=baseContext(); ctx.UrlFetchApp={fetch(url,input){calls++;options=input;return {getResponseCode:()=>200,getContentText:()=>'{"ok":true,"result":{"message_id":42}}'};}};
-  const result=ctx.sendTelegramMessage_('token','-10099999999999999999','hello'); assert.equal(result.result,'SENT'); assert.equal(result.telegramMessageId,'42'); assert.equal(calls,1);
-  assert.equal(JSON.parse(options.payload).chat_id,'-10099999999999999999'); assert.equal(JSON.parse(options.payload).parse_mode,undefined);
+test('296. Telegram transport enables HTML only for the complete generated format', () => {
+  const payloads=[]; const ctx=baseContext(); ctx.UrlFetchApp={fetch(url,input){payloads.push(JSON.parse(input.payload));return {getResponseCode:()=>200,getContentText:()=>'{"ok":true,"result":{"message_id":42}}'};}};
+  const messages=[
+    '📄 Документооборот — 20.09.2026\n\n🏗 Объект: Альфа\n• <b>15</b>. Статус. До <u>20.09.2026</u>. <b>Сделать:</b> действие',
+    'legacy plain text',
+    'legacy <b>старый текст</b>',
+    'legacy <b>Сделать:</b> без строки документа',
+    '• <b>Документ</b>. Статус. До <u>20.09.2026</u>. <b>Сделать:</b> действие'
+  ];
+  messages.forEach(message=>assert.equal(ctx.sendTelegramMessage_('token','-10099999999999999999',message).result,'SENT'));
+  assert.deepEqual(payloads.map(payload=>payload.parse_mode),['HTML',undefined,undefined,undefined,'HTML']);
+  payloads.forEach((payload,index)=>assert.equal(payload.text,messages[index]));
+  assert.ok(payloads.every(payload=>payload.chat_id==='-10099999999999999999'));
 });
 test('297. Telegram explicit response classifications are normalized', () => {
   [[429,'FAILED_TECHNICAL',true],[500,'FAILED_TECHNICAL',true],[400,'FAILED_PERMANENT',false],[401,'FAILED_CONFIGURATION',false],[403,'FAILED_CONFIGURATION',false]].forEach(([status,result,retry])=>{
